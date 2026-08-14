@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --bg-main: #0b0f19;
+    --bg-surface: #111827;
+    --bg-elevated: #162032;
+    --bg-card: #141d2e;
+    --bg-editor: #090e18;
+    --bg-gutter: #0c121e;
+    --border-subtle: #1f293d;
+    --border-strong: #2d3b55;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+  }
+
+  .light {
+    color-scheme: light;
+    --bg-main: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f1f5f9;
+    --bg-card: #ffffff;
+    --bg-editor: #fbfcfe;
+    --bg-gutter: #f1f5f9;
+    --border-subtle: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    letter-spacing: -0.015em;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  pre, code, kbd, samp {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    letter-spacing: 0em;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* Linear-style UI panels and cards */
+.theme-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.theme-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+}
+
+.theme-card:hover {
+  border-color: var(--border-strong);
+}
+
+/* Monaco-style code gutter */
+.code-line-gutter {
+  user-select: none;
+  color: var(--text-muted);
+  text-align: right;
+  width: 2.85rem;
+  padding-right: 0.85rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  background: var(--bg-gutter);
+}
+
+/* Git diff highlighting */
+.diff-del {
+  background-color: rgba(244, 63, 94, 0.12);
+  color: #f43f5e;
+  border-left: 2px solid #f43f5e;
+}
+
+.diff-add {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border-left: 2px solid #10b981;
+}
+
+/* Terminal window */
+.terminal-window {
+  background: var(--bg-editor);
+  border: 1px solid var(--border-subtle);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Key cap badge */
+.kbd-shortcut {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* Print optimizations */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .no-print, aside, header {
+    display: none !important;
+  }
+  .theme-panel, .theme-card {
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+  }
+}
