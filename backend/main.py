@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routes.review import router as review_router
+from routes.auth import router as auth_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -23,6 +24,7 @@ app.add_middleware(
 
 # Mount routes
 app.include_router(review_router)
+app.include_router(auth_router)
 
 @app.get("/health", tags=["Health"])
 def health_check():

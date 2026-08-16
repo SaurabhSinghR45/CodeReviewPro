@@ -31,7 +31,9 @@ def test_create_review_success():
         "style": [{"line": "Line 1", "issue": "Format", "suggestion": "Fix"}],
         "bugs": [],
         "security": [],
-        "summary": "Mock summary test"
+        "performance": [],
+        "summary": "Mock summary test",
+        "remediated_code": "def hello(): pass"
     }
 
     with patch("routes.review.run_orchestrator", new=AsyncMock(return_value=mock_orchestration)):

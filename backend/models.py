@@ -6,6 +6,7 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_email = Column(String, nullable=True, default="guest@codereview.pro", index=True)
     source_url = Column(String, nullable=False, default="pasted code")
     language = Column(String, nullable=False, default="auto")
     code_snippet = Column(Text, nullable=False)
@@ -16,4 +17,5 @@ class Review(Base):
     security_findings = Column(Text, nullable=False, default="[]")
     performance_findings = Column(Text, nullable=False, default="[]")
     summary = Column(Text, nullable=False, default="")
+    remediated_code = Column(Text, nullable=True, default="")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

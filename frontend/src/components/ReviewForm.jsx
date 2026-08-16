@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileCode, 
   Play, 
@@ -21,8 +21,17 @@ import {
   CheckSquare,
   Square,
   Terminal as TerminalIcon,
-  Search
+  Search,
+  Plus,
+  FolderGit2,
+  CheckCircle2,
+  Users,
+  ShieldAlert,
+  Award,
+  Brain,
+  ChevronDown
 } from 'lucide-react';
+import { useAuth } from '@clerk/clerk-react';
 import AgentTopology from './AgentTopology';
 
 const GithubIcon = ({ className = "w-4 h-4" }) => (
@@ -68,20 +77,107 @@ const LANGUAGES = [
   'python',
   'javascript',
   'typescript',
+  'cpp',
   'go',
   'rust',
   'java',
-  'cpp',
   'sql',
   'html/css'
 ];
 
-export default function ReviewForm({ onReviewComplete }) {
-  const [inputMode, setInputMode] = useState('url'); // 'url', 'code', 'file'
-  const [githubUrl, setGithubUrl] = useState('');
-  const [rawCode, setRawCode] = useState('');
-  const [language, setLanguage] = useState('auto');
+export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
+  let clerkAuth = null;
+  try {
+    clerkAuth = useAuth();
+  } catch (e) {}
+
+  const [inputMode, setInputMode] = useState(() => {
+    return sessionStorage.getItem('cr_input_mode') || 'code';
+  });
+  const [githubUrl, setGithubUrl] = useState(() => {
+    return sessionStorage.getItem('cr_github_url') || '';
+  });
+  const [rawCode, setRawCode] = useState(() => {
+    return sessionStorage.getItem('cr_raw_code') || '';
+  });
+  const [language, setLanguage] = useState(() => {
+    return sessionStorage.getItem('cr_language') || 'auto';
+  });
+  const [problemContext, setProblemContext] = useState(() => {
+    return sessionStorage.getItem('cr_problem_context') || '';
+  });
+  const [constraints, setConstraints] = useState(() => {
+    return sessionStorage.getItem('cr_constraints') || '';
+  });
+  const [showDsaPanel, setShowDsaPanel] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState('');
+
+  // Persist form state across tab switches and results navigation
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_input_mode', inputMode); } catch (e) {}
+  }, [inputMode]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_github_url', githubUrl); } catch (e) {}
+  }, [githubUrl]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_raw_code', rawCode); } catch (e) {}
+  }, [rawCode]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_language', language); } catch (e) {}
+  }, [language]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_problem_context', problemContext); } catch (e) {}
+  }, [problemContext]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('cr_constraints', constraints); } catch (e) {}
+  }, [constraints]);
+
+  const isGuest = !user || user.name === 'Guest Developer' || !user.isVerified;
+  const [stats, setStats] = useState({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
+
+  const hasFetchedStats = useRef(false);
+
+  useEffect(() => {
+    if (isGuest) {
+      setStats({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
+      hasFetchedStats.current = false;
+      return;
+    }
+
+    if (hasFetchedStats.current) return;
+    hasFetchedStats.current = true;
+
+    const loadUserStats = async () => {
+      try {
+        const userEmail = user?.email || '';
+        const res = await fetch(`/reviews?user_email=${encodeURIComponent(userEmail)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const avg = Math.round(data.reduce((acc, r) => acc + (r.health_score || 0), 0) / data.length);
+            let grade = 'A';
+            if (avg < 60) grade = 'F';
+            else if (avg < 70) grade = 'D';
+            else if (avg < 80) grade = 'C';
+            else if (avg < 90) grade = 'B';
+            setStats({ totalAudits: data.length, avgHealth: avg, grade: `Grade ${grade}` });
+            return;
+          } else {
+            setStats({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
+            return;
+          }
+        }
+      } catch (e) {}
+      setStats({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
+    };
+
+    loadUserStats();
+  }, [user?.email, isGuest]);
 
   // Repo Inspector State
   const [isInspecting, setIsInspecting] = useState(false);
@@ -116,7 +212,7 @@ export default function ReviewForm({ onReviewComplete }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, []);
 
   // Live Repo Inspector Trigger
   useEffect(() => {
@@ -179,6 +275,36 @@ export default function ReviewForm({ onReviewComplete }) {
       else setLanguage('auto');
     };
     reader.readAsText(file);
+  };
+
+  const handleFormatCode = () => {
+    if (!rawCode.trim()) return;
+    try {
+      const lines = rawCode.split('\n');
+      let indentLevel = 0;
+      const formatted = lines.map((rawLine) => {
+        let line = rawLine.trim();
+        if (!line) return '';
+
+        if (line.startsWith('}') || line.startsWith(')')) {
+          indentLevel = Math.max(0, indentLevel - 1);
+        }
+
+        const indentStr = '    '.repeat(indentLevel);
+        const result = indentStr + line;
+
+        if (line.endsWith('{') || line.endsWith('(') || (line.endsWith(':') && !line.startsWith('//'))) {
+          indentLevel++;
+        }
+
+        return result;
+      }).join('\n');
+
+      setRawCode(formatted);
+      try {
+        sessionStorage.setItem('cr_raw_code', formatted);
+      } catch (e) {}
+    } catch (e) {}
   };
 
   const toggleFileSelection = (path) => {
@@ -246,7 +372,10 @@ export default function ReviewForm({ onReviewComplete }) {
       const payload = {
         language: language === 'auto' ? 'auto' : language,
         agents_config: agentsConfig,
-        strictness: strictness
+        strictness: strictness,
+        user_email: user?.email || 'guest@codereview.pro',
+        problem_context: problemContext.trim() || undefined,
+        constraints: constraints.trim() || undefined
       };
 
       if (inputMode === 'url') {
@@ -258,9 +387,28 @@ export default function ReviewForm({ onReviewComplete }) {
         payload.raw_code = rawCode.trim();
       }
 
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        if (clerkAuth && clerkAuth.getToken) {
+          const clerkToken = await clerkAuth.getToken();
+          if (clerkToken) {
+            headers['Authorization'] = `Bearer ${clerkToken}`;
+          }
+        }
+        if (!headers['Authorization']) {
+          const stored = localStorage.getItem('cr_user');
+          if (stored) {
+            const u = JSON.parse(stored);
+            if (u.id || u.email) {
+              headers['Authorization'] = `Bearer ${btoa(u.id || u.email)}`;
+            }
+          }
+        }
+      } catch (e) {}
+
       const res = await fetch('/review', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify(payload),
       });
 
@@ -310,411 +458,590 @@ export default function ReviewForm({ onReviewComplete }) {
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Agent Topology Pipeline Architecture */}
-      <AgentTopology isAuditing={isLoading} />
-
-      {/* Workbench Navigation Tabs */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-3 border-b border-[var(--border-subtle)]">
-        <div className="flex items-center p-1 theme-panel rounded-xl w-full sm:w-auto">
+    <div className="max-w-6xl mx-auto space-y-7">
+      {/* Guest Mode Notification Bar if not authenticated */}
+      {isGuest && (
+        <div className="p-3.5 px-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-blue-600 dark:text-blue-400 animate-fadeIn">
+          <div className="flex items-center gap-2.5 text-left">
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Guest Session Active:</strong> You can test any code or repository instantly. Create a verified free account to sync audit history and export PDF reports.
+            </span>
+          </div>
           <button
-            type="button"
-            onClick={() => { setInputMode('url'); setErrorMsg(''); }}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              inputMode === 'url'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            onClick={() => onOpenAuth && onOpenAuth('signup')}
+            className="px-3 py-1 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-colors shrink-0 shadow-sm cursor-pointer"
           >
-            <GithubIcon className="w-3.5 h-3.5" />
-            GitHub Repo / PR
-          </button>
-
-          <button
-            type="button"
-            onClick={() => { setInputMode('code'); setErrorMsg(''); }}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              inputMode === 'code'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <FileCode className="w-3.5 h-3.5" />
-            Monaco Editor
-          </button>
-
-          <button
-            type="button"
-            onClick={() => { setInputMode('file'); setErrorMsg(''); }}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              inputMode === 'file'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            File Upload
+            Create Account
           </button>
         </div>
+      )}
 
-        {/* Toolbar Controls */}
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-            <span className="text-[11px] font-mono">Language:</span>
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="theme-panel rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-indigo-500 capitalize"
-            >
-              {LANGUAGES.map((lang) => (
-                <option key={lang} value={lang}>
-                  {lang === 'auto' ? 'Auto-Detect' : lang.toUpperCase()}
-                </option>
-              ))}
-            </select>
+      {/* Top Welcome & Action Header (Syncra Style) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)] tracking-tight">
+            Welcome back, <span className="text-blue-600">{user?.name || 'SAURABH SINGH'}</span>
+          </h1>
+          <p className="text-xs sm:text-sm text-[var(--text-secondary)] mt-1">
+            Here's what's happening with your code reviews and repository audits today in <span className="font-semibold text-[var(--text-primary)]">{user?.workspace || 'Workspace'}</span>.
+          </p>
+        </div>
+
+        <button
+          onClick={() => { setInputMode('code'); loadSample('code'); }}
+          className="syncra-btn-primary px-5 py-2.5 flex items-center gap-2 text-xs shadow-md shrink-0 cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          <span>New Review</span>
+        </button>
+      </div>
+
+      {/* 4 Pastel Gradient Metric Cards (Syncra Style) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Total Audits (Blue) */}
+        <div className="stat-card-blue p-5 rounded-2xl syncra-card-hover flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-xs font-semibold text-[var(--text-secondary)] block">Total Audits</span>
+            <span className="text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)] block">
+              {isGuest ? 0 : stats.totalAudits}
+            </span>
+            <span className="text-[10px] text-[var(--text-muted)] block truncate">
+              {isGuest ? 'No audits recorded' : `projects in ${user?.workspace || 'Workspace'}`}
+            </span>
           </div>
+          <div className="w-12 h-12 rounded-full bg-white dark:bg-slate-900 text-blue-600 flex items-center justify-center shadow-sm shrink-0">
+            <FolderGit2 className="w-5 h-5" />
+          </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={() => setShowConfig(!showConfig)}
-            className={`p-1.5 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-              showConfig
-                ? 'bg-indigo-500/10 text-indigo-500 border-indigo-500/30'
-                : 'theme-panel text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            Ruleset
-          </button>
+        {/* Card 2: Average Health (Green) */}
+        <div className="stat-card-green p-5 rounded-2xl syncra-card-hover flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-xs font-semibold text-[var(--text-secondary)] block">Average Health</span>
+            <span className="text-2xl sm:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 block">
+              {isGuest ? '0 / 100' : `${stats.avgHealth} / 100`}
+            </span>
+            <span className="text-[10px] text-[var(--text-muted)] block">
+              {isGuest ? 'No audit data yet' : `${stats.grade} quality rating`}
+            </span>
+          </div>
+          <div className="w-12 h-12 rounded-full bg-white dark:bg-slate-900 text-emerald-600 flex items-center justify-center shadow-sm shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={() => loadSample('code')}
-            className="text-xs text-indigo-500 hover:text-indigo-400 font-semibold underline underline-offset-4 flex items-center gap-1"
-          >
-            <Code className="w-3.5 h-3.5" />
-            Sample Code
-          </button>
+        {/* Card 3: Active AI Pods (Purple) */}
+        <div className="stat-card-purple p-5 rounded-2xl syncra-card-hover flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-xs font-semibold text-[var(--text-secondary)] block">Parallel Pods</span>
+            <span className="text-2xl sm:text-3xl font-extrabold text-purple-600 dark:text-purple-400 block">4 Agents</span>
+            <span className="text-[10px] text-[var(--text-muted)] block">Style, Bug, AppSec, Perf</span>
+          </div>
+          <div className="w-12 h-12 rounded-full bg-white dark:bg-slate-900 text-purple-600 flex items-center justify-center shadow-sm shrink-0">
+            <Users className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Card 4: Security Matrix (Amber) */}
+        <div className="stat-card-amber p-5 rounded-2xl syncra-card-hover flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-xs font-semibold text-[var(--text-secondary)] block">Security Rules</span>
+            <span className="text-2xl sm:text-3xl font-extrabold text-amber-600 dark:text-amber-400 block">OWASP 10</span>
+            <span className="text-[10px] text-[var(--text-muted)] block">CWE-89, CWE-798, CWE-22</span>
+          </div>
+          <div className="w-12 h-12 rounded-full bg-white dark:bg-slate-900 text-amber-600 flex items-center justify-center shadow-sm shrink-0">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
         </div>
       </div>
 
-      {/* Rules & Sensitivity Config Drawer */}
-      {showConfig && (
-        <div className="p-4 rounded-2xl theme-panel space-y-3 animate-fadeIn">
-          <div className="flex items-center justify-between text-xs font-semibold text-[var(--text-primary)]">
-            <span className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-indigo-500" />
-              Active Multi-Agent Rule Engine
-            </span>
-            <span className="text-[var(--text-muted)] font-mono text-[11px]">Strictness: Standard</span>
+      {/* Multi-Agent Pipeline Topology Card */}
+      <AgentTopology isAuditing={isLoading} />
+
+      {/* Main Review Workbench Box */}
+      <div className="syncra-card p-5 sm:p-7 space-y-6">
+        {/* Workbench Segmented Control Tabs */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-[var(--border-subtle)]">
+          <div className="flex items-center p-1 bg-[var(--bg-elevated)] rounded-xl w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => { setInputMode('url'); setErrorMsg(''); }}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                inputMode === 'url'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <GithubIcon className="w-4 h-4" />
+              GitHub Repo / PR
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setInputMode('code'); setErrorMsg(''); }}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                inputMode === 'code'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <FileCode className="w-4 h-4" />
+              Monaco Editor
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setInputMode('file'); setErrorMsg(''); }}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                inputMode === 'file'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Upload className="w-4 h-4" />
+              File Upload
+            </button>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
-              agentsConfig.style ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' : 'theme-card text-[var(--text-muted)]'
-            }`}>
-              <input
-                type="checkbox"
-                checked={agentsConfig.style}
-                onChange={(e) => setAgentsConfig({...agentsConfig, style: e.target.checked})}
-                className="rounded text-purple-600 focus:ring-0"
-              />
-              <Palette className="w-3.5 h-3.5" />
-              Style (PEP8/Lint)
-            </label>
+          {/* Toolbar Controls */}
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <span className="text-[11px] font-mono font-medium">Lang:</span>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-blue-500 capitalize"
+              >
+                {LANGUAGES.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang === 'auto' ? 'Auto-Detect' : lang.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-            <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
-              agentsConfig.bugs ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'theme-card text-[var(--text-muted)]'
-            }`}>
-              <input
-                type="checkbox"
-                checked={agentsConfig.bugs}
-                onChange={(e) => setAgentsConfig({...agentsConfig, bugs: e.target.checked})}
-                className="rounded text-amber-600 focus:ring-0"
-              />
-              <Bug className="w-3.5 h-3.5" />
-              Logic & Bugs
-            </label>
+            <button
+              type="button"
+              onClick={() => setShowConfig(!showConfig)}
+              className={`p-1.5 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                showConfig
+                  ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              Ruleset
+            </button>
 
-            <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
-              agentsConfig.security ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'theme-card text-[var(--text-muted)]'
-            }`}>
-              <input
-                type="checkbox"
-                checked={agentsConfig.security}
-                onChange={(e) => setAgentsConfig({...agentsConfig, security: e.target.checked})}
-                className="rounded text-rose-600 focus:ring-0"
-              />
-              <ShieldCheck className="w-3.5 h-3.5" />
-              AppSec & CWEs
-            </label>
-
-            <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
-              agentsConfig.performance ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'theme-card text-[var(--text-muted)]'
-            }`}>
-              <input
-                type="checkbox"
-                checked={agentsConfig.performance}
-                onChange={(e) => setAgentsConfig({...agentsConfig, performance: e.target.checked})}
-                className="rounded text-emerald-600 focus:ring-0"
-              />
-              <Zap className="w-3.5 h-3.5" />
-              O(n) Performance
-            </label>
+            <button
+              type="button"
+              onClick={() => loadSample('code')}
+              className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 flex items-center gap-1"
+            >
+              <Code className="w-3.5 h-3.5" />
+              Sample
+            </button>
           </div>
         </div>
-      )}
 
-      {/* Error Banner */}
-      {errorMsg && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-3 animate-fadeIn">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <strong className="block font-semibold">Review Notice</strong>
-            <span>{errorMsg}</span>
-          </div>
-        </div>
-      )}
+        {/* Rules & Sensitivity Config Drawer */}
+        {showConfig && (
+          <div className="p-4 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-3 animate-fadeIn">
+            <div className="flex items-center justify-between text-xs font-bold text-[var(--text-primary)]">
+              <span className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-blue-600" />
+                Active Multi-Agent Rule Matrix
+              </span>
+              <span className="text-[var(--text-muted)] font-mono text-[11px]">Strictness: Standard</span>
+            </div>
 
-      {/* Form Workspace */}
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {inputMode === 'url' ? (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">
-                GitHub Repository, Pull Request, or File URL
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--text-muted)]">
-                  <GithubIcon className="w-4 h-4" />
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
+                agentsConfig.style ? 'bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400' : 'theme-card text-[var(--text-muted)]'
+              }`}>
                 <input
-                  type="url"
-                  value={githubUrl}
-                  onChange={(e) => setGithubUrl(e.target.value)}
-                  placeholder="e.g. https://github.com/SaurabhSinghR45/VibeSync or https://github.com/owner/repo/pull/12"
-                  className="w-full pl-10 pr-10 py-3 theme-panel rounded-xl text-[var(--text-primary)] placeholder-[var(--text-muted)] text-xs font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-                  disabled={isLoading}
+                  type="checkbox"
+                  checked={agentsConfig.style}
+                  onChange={(e) => setAgentsConfig({...agentsConfig, style: e.target.checked})}
+                  className="rounded text-purple-600 focus:ring-0"
                 />
-                {isInspecting && (
-                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center">
-                    <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />
+                <Palette className="w-3.5 h-3.5" />
+                Style (Clean Code)
+              </label>
+
+              <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
+                agentsConfig.bugs ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400' : 'theme-card text-[var(--text-muted)]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={agentsConfig.bugs}
+                  onChange={(e) => setAgentsConfig({...agentsConfig, bugs: e.target.checked})}
+                  className="rounded text-amber-600 focus:ring-0"
+                />
+                <Bug className="w-3.5 h-3.5" />
+                Logic & Bugs
+              </label>
+
+              <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
+                agentsConfig.security ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400' : 'theme-card text-[var(--text-muted)]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={agentsConfig.security}
+                  onChange={(e) => setAgentsConfig({...agentsConfig, security: e.target.checked})}
+                  className="rounded text-rose-600 focus:ring-0"
+                />
+                <ShieldCheck className="w-3.5 h-3.5" />
+                AppSec (OWASP)
+              </label>
+
+              <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer text-xs font-semibold ${
+                agentsConfig.performance ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' : 'theme-card text-[var(--text-muted)]'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={agentsConfig.performance}
+                  onChange={(e) => setAgentsConfig({...agentsConfig, performance: e.target.checked})}
+                  className="rounded text-emerald-600 focus:ring-0"
+                />
+                <Zap className="w-3.5 h-3.5" />
+                O(n) Performance
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Error Banner */}
+        {errorMsg && (
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-3 animate-fadeIn">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <strong className="block font-bold">Review Notice</strong>
+              <span>{errorMsg}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Form Workspace */}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {inputMode === 'url' ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">
+                  GitHub Repository, Pull Request, or File URL
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[var(--text-muted)]">
+                    <GithubIcon className="w-4 h-4" />
                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Quick Sample Presets */}
-            <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <span className="text-[var(--text-muted)] font-mono text-[11px]">Quick Samples:</span>
-              {SAMPLE_REPOS.map((sample, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => { setGithubUrl(sample.url); setErrorMsg(''); }}
-                  className="px-2.5 py-1 rounded-lg theme-card hover:bg-[var(--border-subtle)] text-indigo-500 text-[11px] font-mono transition-colors"
-                >
-                  {sample.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Live Repository Explorer Card */}
-            {repoMeta && (
-              <div className="p-4 rounded-2xl theme-panel border-indigo-500/30 space-y-4 animate-fadeIn">
-                {/* Repo Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-[var(--text-primary)] font-mono">{repoMeta.full_name}</span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                        {repoMeta.language}
-                      </span>
+                  <input
+                    type="url"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    placeholder="e.g. https://github.com/SaurabhSinghR45/VibeSync or https://github.com/owner/repo/pull/12"
+                    className="w-full pl-10 pr-10 py-3 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-[var(--text-primary)] placeholder-[var(--text-muted)] text-xs font-mono focus:outline-none focus:border-blue-500 transition-colors shadow-inner"
+                    disabled={isLoading}
+                  />
+                  {isInspecting && (
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center">
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
                     </div>
-                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">{repoMeta.description}</p>
-                  </div>
-
-                  <div className="flex items-center gap-3 text-xs text-[var(--text-secondary)] font-mono">
-                    <span className="flex items-center gap-1"><Star className="w-3.5 h-3.5 text-amber-500" /> {repoMeta.stars}</span>
-                    <span className="flex items-center gap-1"><GitFork className="w-3.5 h-3.5" /> {repoMeta.forks}</span>
-                    <span className="flex items-center gap-1"><GitBranch className="w-3.5 h-3.5 text-indigo-500" /> {repoMeta.default_branch}</span>
-                  </div>
+                  )}
                 </div>
+              </div>
 
-                {/* File Tree Explorer */}
-                {repoMeta.files && repoMeta.files.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-[var(--text-primary)] font-semibold flex items-center gap-1.5">
-                        <FolderTree className="w-3.5 h-3.5 text-indigo-500" />
-                        Repository Code Files ({selectedFiles.length} of {repoMeta.files.length} selected for audit)
-                      </span>
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <button type="button" onClick={selectAllFiles} className="text-indigo-500 hover:underline">Select All</button>
-                        <span>•</span>
-                        <button type="button" onClick={deselectAllFiles} className="text-[var(--text-muted)] hover:underline">Deselect All</button>
+              {/* Quick Sample Presets */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <span className="text-[var(--text-muted)] font-mono text-[11px]">Quick Samples:</span>
+                {SAMPLE_REPOS.map((sample, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => { setGithubUrl(sample.url); setErrorMsg(''); }}
+                    className="px-3 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--border-strong)] text-blue-600 dark:text-blue-400 text-[11px] font-mono font-medium transition-colors"
+                  >
+                    {sample.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Live Repository Explorer Card */}
+              {repoMeta && (
+                <div className="p-5 rounded-2xl bg-[var(--bg-elevated)] border border-blue-500/30 space-y-4 animate-fadeIn">
+                  {/* Repo Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-[var(--text-primary)] font-mono">{repoMeta.full_name}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                          {repoMeta.language}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[var(--text-secondary)] mt-0.5">{repoMeta.description}</p>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-xs text-[var(--text-secondary)] font-mono">
+                      <span className="flex items-center gap-1"><Star className="w-3.5 h-3.5 text-amber-500" /> {repoMeta.stars}</span>
+                      <span className="flex items-center gap-1"><GitFork className="w-3.5 h-3.5" /> {repoMeta.forks}</span>
+                      <span className="flex items-center gap-1"><GitBranch className="w-3.5 h-3.5 text-blue-600" /> {repoMeta.default_branch}</span>
+                    </div>
+                  </div>
+
+                  {/* File Tree Explorer */}
+                  {repoMeta.files && repoMeta.files.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[var(--text-primary)] font-bold flex items-center gap-1.5">
+                          <FolderTree className="w-3.5 h-3.5 text-blue-600" />
+                          Repository Code Files ({selectedFiles.length} of {repoMeta.files.length} selected for audit)
+                        </span>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <button type="button" onClick={selectAllFiles} className="text-blue-600 font-bold hover:underline">Select All</button>
+                          <span>•</span>
+                          <button type="button" onClick={deselectAllFiles} className="text-[var(--text-muted)] hover:underline">Deselect All</button>
+                        </div>
+                      </div>
+
+                      {/* Filter File Search */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          value={fileFilter}
+                          onChange={(e) => setFileFilter(e.target.value)}
+                          placeholder="Filter repository code files..."
+                          className="w-full pl-9 pr-3 py-1.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      {/* File List */}
+                      <div className="max-h-48 overflow-y-auto bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-2 space-y-1">
+                        {filteredRepoFiles.map((file) => {
+                          const isSelected = selectedFiles.includes(file.path);
+                          return (
+                            <div
+                              key={file.path}
+                              onClick={() => toggleFileSelection(file.path)}
+                              className={`flex items-center justify-between p-2 rounded-lg text-xs font-mono cursor-pointer transition-colors ${
+                                isSelected ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold border border-blue-500/30' : 'hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-transparent'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 truncate">
+                                {isSelected ? <CheckSquare className="w-3.5 h-3.5 text-blue-600 shrink-0" /> : <Square className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />}
+                                <span className="truncate">{file.path}</span>
+                              </span>
+                              <span className="text-[10px] text-[var(--text-muted)] shrink-0 ml-2">{(file.size / 1024).toFixed(1)} KB</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : inputMode === 'file' ? (
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                Upload Source Code File
+              </label>
+              <div className="border-2 border-dashed border-[var(--border-subtle)] hover:border-blue-500/50 rounded-2xl p-10 text-center bg-[var(--bg-elevated)] transition-colors cursor-pointer relative">
+                <input
+                  type="file"
+                  onChange={handleFileUpload}
+                  accept=".py,.js,.jsx,.ts,.tsx,.go,.rs,.java,.cpp,.c,.h,.sql"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <Upload className="w-9 h-9 text-blue-600 mx-auto mb-2" />
+                <h3 className="text-xs font-bold text-[var(--text-primary)]">
+                  Click to browse or drag & drop code file
+                </h3>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Supports .py, .js, .ts, .go, .rs, .java, .cpp, .sql (Max 2MB)
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[var(--text-primary)] uppercase text-[11px]">Monaco Code Editor</span>
+                  {uploadedFileName && (
+                    <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 font-mono text-[10px]">
+                      {uploadedFileName}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 font-mono text-[11px]">
+                  {rawCode && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleFormatCode}
+                        className="text-blue-600 dark:text-blue-400 hover:underline transition-colors flex items-center gap-1 cursor-pointer font-bold"
+                        title="Auto-format standard 4-space indentation"
+                      >
+                        <Sparkles className="w-3 h-3" /> Format & Indent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setRawCode(''); setUploadedFileName(''); }}
+                        className="text-[var(--text-muted)] hover:text-rose-500 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" /> Clear
+                      </button>
+                    </>
+                  )}
+                  <span>{rawCode.split('\n').length} lines</span>
+                  <span className={rawCode.length > MAX_CHARS ? 'text-rose-500 font-bold' : ''}>
+                    {rawCode.length.toLocaleString()} / {MAX_CHARS.toLocaleString()} chars
+                  </span>
+                </div>
+              </div>
 
-                    {/* Filter File Search */}
-                    <div className="relative">
-                      <Search className="w-3 h-3 text-[var(--text-muted)] absolute left-2.5 top-2.5" />
+              {/* Monaco-style Editor Window */}
+              <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-editor)] overflow-hidden flex shadow-sm">
+                <div className="code-line-gutter py-3.5 select-none border-r border-[var(--border-subtle)]">
+                  {(rawCode ? rawCode.split('\n') : ['1']).map((_, i) => (
+                    <div key={i} className="leading-5">{i + 1}</div>
+                  ))}
+                </div>
+                <textarea
+                  value={rawCode}
+                  onChange={(e) => setRawCode(e.target.value)}
+                  placeholder="// Paste code snippet or enter function definitions..."
+                  rows={14}
+                  className="flex-1 p-3.5 bg-transparent text-[var(--text-primary)] font-mono text-xs leading-5 focus:outline-none resize-y"
+                  disabled={isLoading}
+                />
+              </div>
+
+              {/* DSA Problem Context & Constraints Collapsible Card (LeetCode / GFG) */}
+              <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] overflow-hidden mt-3 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setShowDsaPanel(!showDsaPanel)}
+                  className="w-full flex items-center justify-between p-3.5 px-4 text-left text-xs font-bold text-[var(--text-primary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Brain className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>DSA Problem Context & Constraints (LeetCode / GFG / Codeforces)</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 font-normal">
+                      Optional • For 100% Accurate DSA Review
+                    </span>
+                  </div>
+                  <ChevronDown className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${showDsaPanel ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showDsaPanel && (
+                  <div className="p-4 pt-2 space-y-3 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs">
+                    {/* Platform Presets */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] text-[var(--text-muted)] font-mono">Quick DSA Presets:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProblemContext('Given a weighted directed graph with V vertices and edges. Find shortest paths from src node.');
+                          setConstraints('1 <= V <= 10^5, 0 <= E <= 10^5. Time limit: 1.0s (Target: O((V+E)logV)). Space limit: 256MB.');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-blue-500/10 hover:text-blue-600 font-mono text-[10px] text-[var(--text-secondary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
+                      >
+                        LeetCode Graph (Dijkstra)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProblemContext('Given array of integers, find maximum subarray sum with at least one element.');
+                          setConstraints('1 <= N <= 10^6, -10^9 <= nums[i] <= 10^9. Target: O(N) time, O(1) space.');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-blue-500/10 hover:text-blue-600 font-mono text-[10px] text-[var(--text-secondary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
+                      >
+                        Kadane DP / Array
+                      </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[var(--text-secondary)]">Problem Description / Goal</label>
                       <input
                         type="text"
-                        value={fileFilter}
-                        onChange={(e) => setFileFilter(e.target.value)}
-                        placeholder="Filter repository code files..."
-                        className="w-full pl-8 pr-3 py-1.5 theme-card rounded-lg text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-indigo-500"
+                        value={problemContext}
+                        onChange={(e) => setProblemContext(e.target.value)}
+                        placeholder="e.g. LeetCode 743. Network Delay Time / Dijkstra shortest distance"
+                        className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-blue-500 font-mono"
                       />
                     </div>
 
-                    {/* File List */}
-                    <div className="max-h-48 overflow-y-auto theme-card rounded-xl p-2 space-y-1">
-                      {filteredRepoFiles.map((file) => {
-                        const isSelected = selectedFiles.includes(file.path);
-                        return (
-                          <div
-                            key={file.path}
-                            onClick={() => toggleFileSelection(file.path)}
-                            className={`flex items-center justify-between p-1.5 px-2 rounded-lg text-xs font-mono cursor-pointer transition-colors ${
-                              isSelected ? 'bg-indigo-600/15 text-indigo-500 border border-indigo-500/30' : 'hover:bg-[var(--border-subtle)] text-[var(--text-secondary)] border border-transparent'
-                            }`}
-                          >
-                            <span className="flex items-center gap-2 truncate">
-                              {isSelected ? <CheckSquare className="w-3.5 h-3.5 text-indigo-500 shrink-0" /> : <Square className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />}
-                              <span className="truncate">{file.path}</span>
-                            </span>
-                            <span className="text-[10px] text-[var(--text-muted)] shrink-0 ml-2">{(file.size / 1024).toFixed(1)} KB</span>
-                          </div>
-                        );
-                      })}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[var(--text-secondary)]">Constraints & Bounds (Time / Space Limits)</label>
+                      <input
+                        type="text"
+                        value={constraints}
+                        onChange={(e) => setConstraints(e.target.value)}
+                        placeholder="e.g. 1 <= V <= 10^5, Time limit 1.0s (Requires O((V+E)logV))"
+                        className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-blue-500 font-mono"
+                      />
                     </div>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        ) : inputMode === 'file' ? (
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
-              Upload Source Code File
-            </label>
-            <div className="border-2 border-dashed border-[var(--border-subtle)] hover:border-indigo-500/50 rounded-2xl p-8 text-center theme-panel transition-colors cursor-pointer relative">
-              <input
-                type="file"
-                onChange={handleFileUpload}
-                accept=".py,.js,.jsx,.ts,.tsx,.go,.rs,.java,.cpp,.c,.h,.sql"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <Upload className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
-              <h3 className="text-xs font-bold text-[var(--text-primary)]">
-                Click to browse or drag & drop code file
-              </h3>
-              <p className="text-[11px] text-[var(--text-muted)] mt-1">
-                Supports .py, .js, .ts, .go, .rs, .java, .cpp, .sql (Max 2MB)
-              </p>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-[var(--text-primary)] uppercase text-[11px]">Monaco Code Editor</span>
-                {uploadedFileName && (
-                  <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-500 font-mono text-[10px]">
-                    {uploadedFileName}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-3 font-mono text-[11px]">
-                {rawCode && (
-                  <button
-                    type="button"
-                    onClick={() => { setRawCode(''); setUploadedFileName(''); }}
-                    className="text-[var(--text-muted)] hover:text-rose-500 transition-colors flex items-center gap-1"
-                  >
-                    <Trash2 className="w-3 h-3" /> Clear
-                  </button>
-                )}
-                <span>{rawCode.split('\n').length} lines</span>
-                <span className={rawCode.length > MAX_CHARS ? 'text-rose-500 font-bold' : ''}>
-                  {rawCode.length.toLocaleString()} / {MAX_CHARS.toLocaleString()} chars
+          )}
+
+          {/* Live Execution Console */}
+          {isLoading && (
+            <div className="rounded-2xl p-4 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-2.5 animate-fadeIn">
+              <div className="flex items-center justify-between text-xs border-b border-[var(--border-subtle)] pb-2 text-[var(--text-primary)] font-mono">
+                <span className="flex items-center gap-2">
+                  <TerminalIcon className="w-3.5 h-3.5 text-blue-600" />
+                  Live Parallel Execution Stream
+                </span>
+                <span className="text-blue-600 font-bold flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Step {loadingStep} / 4
                 </span>
               </div>
-            </div>
 
-            {/* Monaco-style Editor Window */}
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-editor)] overflow-hidden flex shadow-sm">
-              <div className="code-line-gutter py-3.5 select-none border-r border-[var(--border-subtle)]">
-                {(rawCode ? rawCode.split('\n') : ['1']).map((_, i) => (
-                  <div key={i} className="leading-5">{i + 1}</div>
+              <div className="space-y-1 font-mono text-[11px] text-[var(--text-muted)] max-h-36 overflow-y-auto">
+                {terminalLogs.map((log, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-emerald-500 font-bold">❯</span>
+                    <span className="text-[var(--text-primary)]">{log}</span>
+                  </div>
                 ))}
               </div>
-              <textarea
-                value={rawCode}
-                onChange={(e) => setRawCode(e.target.value)}
-                placeholder="// Paste code snippet or enter function definitions..."
-                rows={14}
-                className="flex-1 p-3 bg-transparent text-[var(--text-primary)] font-mono text-xs leading-5 focus:outline-none resize-y"
-                disabled={isLoading}
-              />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Live Execution Console */}
-        {isLoading && (
-          <div className="terminal-window rounded-2xl p-4 space-y-2.5 animate-fadeIn">
-            <div className="flex items-center justify-between text-xs border-b border-[var(--border-subtle)] pb-2 text-[var(--text-primary)] font-mono">
-              <span className="flex items-center gap-2">
-                <TerminalIcon className="w-3.5 h-3.5 text-indigo-500" />
-                Live Agent Execution Console
-              </span>
-              <span className="text-indigo-500 font-bold flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Step {loadingStep} / 4
-              </span>
+          {/* Submit Action */}
+          <div className="flex items-center justify-between pt-2">
+            <div className="hidden sm:flex items-center gap-1 text-[11px] text-[var(--text-muted)] font-mono">
+              <span>Press</span>
+              <span className="kbd-shortcut">Ctrl</span>
+              <span className="kbd-shortcut">Enter</span>
+              <span>to execute</span>
             </div>
 
-            <div className="space-y-1 font-mono text-[11px] text-[var(--text-muted)] max-h-36 overflow-y-auto">
-              {terminalLogs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <span className="text-emerald-500 font-bold">❯</span>
-                  <span className="text-[var(--text-primary)]">{log}</span>
-                </div>
-              ))}
-            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="syncra-btn-primary px-7 py-3 flex items-center gap-2 text-xs shadow-lg cursor-pointer disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Auditing via Parallel Agents...
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  Run Multi-Agent Review
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
+              )}
+            </button>
           </div>
-        )}
-
-        {/* Submit Action */}
-        <div className="flex items-center justify-between pt-2">
-          <div className="hidden sm:flex items-center gap-1 text-[11px] text-[var(--text-muted)] font-mono">
-            <span>Press</span>
-            <span className="kbd-shortcut">Ctrl</span>
-            <span className="kbd-shortcut">Enter</span>
-            <span>to execute</span>
-          </div>
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Auditing via Parallel Agents...
-              </>
-            ) : (
-              <>
-                <Play className="w-3.5 h-3.5 fill-current" />
-                Run Multi-Agent Review
-                <ArrowRight className="w-3.5 h-3.5" />
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }

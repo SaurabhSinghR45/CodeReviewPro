@@ -15,7 +15,8 @@ import {
   Zap,
   ShieldCheck,
   Download,
-  Copy
+  Copy,
+  X
 } from 'lucide-react';
 
 export default function CommandPalette({ 
@@ -64,12 +65,13 @@ export default function CommandPalette({
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (!isOpen) return;
+
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIndex(prev => (prev + 1) % (filteredActions.length || 1));
+        setSelectedIndex(prev => (prev < filteredActions.length - 1 ? prev + 1 : 0));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedIndex(prev => (prev - 1 + filteredActions.length) % (filteredActions.length || 1));
+        setSelectedIndex(prev => (prev > 0 ? prev - 1 : filteredActions.length - 1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (filteredActions[selectedIndex]) {
@@ -87,64 +89,82 @@ export default function CommandPalette({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 px-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+    <div 
+      className="fixed inset-0 z-50 flex items-start justify-center pt-24 px-4 bg-black/60 backdrop-blur-sm animate-fadeIn"
+      onClick={onClose}
+    >
       <div 
         className="w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden border theme-panel animate-scaleUp"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search Input */}
-        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-700/50">
-          <Search className="w-4 h-4 text-indigo-400 shrink-0" />
+        {/* Search Input with Clickable Cross (X) */}
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+          <Search className="w-4 h-4 text-blue-500 shrink-0" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
             placeholder="Type a command or search actions..."
-            className="w-full bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none font-sans"
+            className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none font-sans"
           />
-          <span className="kbd-shortcut">ESC</span>
+          {/* Replaced ESC with Clickable Cross (X) */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer"
+            title="Close Search"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Action List */}
-        <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+        <div className="max-h-80 overflow-y-auto p-2 space-y-1 bg-[var(--bg-surface)]">
           {filteredActions.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-500 font-mono">
+            <div className="p-6 text-center text-xs text-[var(--text-muted)] font-mono">
               No matching commands found.
             </div>
           ) : (
-            filteredActions.map((item, idx) => {
-              const Icon = item.icon;
-              const isSelected = selectedIndex === idx;
+            filteredActions.map((action, idx) => {
+              const Icon = action.icon;
+              const isSelected = idx === selectedIndex;
               return (
-                <div
-                  key={item.id}
-                  onClick={() => { item.action(); onClose(); }}
+                <button
+                  key={action.id}
+                  onClick={() => {
+                    action.action();
+                    onClose();
+                  }}
                   onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium cursor-pointer transition-colors ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs transition-all text-left cursor-pointer ${
                     isSelected 
-                      ? 'bg-indigo-600 text-white' 
-                      : 'text-slate-300 hover:bg-slate-800/40'
+                      ? 'bg-blue-600 text-white font-semibold shadow-md' 
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <Icon className={`w-4 h-4 shrink-0 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
-                    <span className="truncate">{item.title}</span>
+                    <Icon className={`w-4 h-4 shrink-0 ${isSelected ? 'text-white' : 'text-blue-500'}`} />
+                    <span className="truncate">{action.title}</span>
                   </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-                    isSelected ? 'bg-indigo-700 text-indigo-100' : 'text-slate-500 bg-slate-900/60'
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md shrink-0 ml-2 ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]'
                   }`}>
-                    {item.category}
+                    {action.category}
                   </span>
-                </div>
+                </button>
               );
             })
           )}
         </div>
 
-        {/* Footer Hint */}
-        <div className="px-4 py-2 border-t border-slate-800/60 text-[10px] text-slate-500 flex items-center justify-between font-mono">
-          <span>Navigate with ↑ ↓ • Press Enter to run</span>
+        {/* Footer info */}
+        <div className="px-4 py-2 bg-[var(--bg-elevated)] border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] text-[var(--text-muted)] font-mono">
+          <div className="flex items-center gap-2">
+            <span>Navigate with ↑ ↓</span>
+            <span>•</span>
+            <span>Press Enter to run</span>
+          </div>
           <span>CodeReviewPro Spotlight</span>
         </div>
       </div>

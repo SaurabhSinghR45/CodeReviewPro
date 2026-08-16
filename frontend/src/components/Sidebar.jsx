@@ -1,15 +1,19 @@
 import React from 'react';
 import { 
-  Code2, 
+  LayoutGrid, 
   BarChart3, 
   History, 
   Sliders, 
   ChevronLeft, 
-  X,
-  ShieldCheck,
-  Zap,
-  Palette,
-  Bug
+  ChevronDown, 
+  X, 
+  FolderGit2, 
+  Users, 
+  Settings, 
+  Plus, 
+  CircleDot, 
+  CheckCircle2, 
+  Cpu 
 } from 'lucide-react';
 
 export default function Sidebar({ 
@@ -20,13 +24,23 @@ export default function Sidebar({
   isMobileOpen, 
   setIsMobileOpen, 
   apiHealth, 
-  latency 
+  latency,
+  user,
+  onOpenProfile,
+  onSelectProject
 }) {
+  const isGuest = !user || user.name === 'Guest Developer' || !user.isVerified;
+
   const navItems = [
-    { id: 'workbench', label: 'Code Workbench', icon: Code2, badge: 'Live' },
+    { id: 'workbench', label: 'Dashboard', icon: LayoutGrid },
     { id: 'analytics', label: 'Security & Quality', icon: BarChart3 },
-    { id: 'history', label: 'Audit History', icon: History },
-    { id: 'settings', label: 'Rules & Agents', icon: Sliders },
+    { id: 'history', label: 'Audit History', icon: History, count: isGuest ? '0' : '12' },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
+
+  const projects = [
+    { id: 'vibesync', name: 'VibeSync', color: 'bg-blue-500', url: 'https://github.com/SaurabhSinghR45/VibeSync' },
+    { id: 'codereview', name: 'CodeReviewPro', color: 'bg-purple-500', url: 'https://github.com/SaurabhSinghR45/CodeReviewPro' },
   ];
 
   return (
@@ -35,57 +49,60 @@ export default function Sidebar({
       {isMobileOpen && (
         <div 
           onClick={() => setIsMobileOpen(false)}
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden animate-fadeIn"
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden animate-fadeIn"
         />
       )}
 
       {/* Sidebar Rail */}
       <aside 
-        className={`fixed top-0 left-0 bottom-0 z-50 theme-panel transition-all duration-300 flex flex-col justify-between ${
+        className={`fixed top-0 left-0 bottom-0 z-50 theme-panel border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] transition-all duration-300 flex flex-col justify-between ${
           isMobileOpen 
             ? 'translate-x-0 w-64' 
             : '-translate-x-full md:translate-x-0 ' + (isCollapsed ? 'md:w-16' : 'md:w-64')
         }`}
       >
-        {/* Top Header */}
         <div>
-          <div className="h-14 flex items-center justify-between px-4 border-b border-[var(--border-subtle)]">
-            <div className={`flex items-center gap-2.5 min-w-0 ${isCollapsed && !isMobileOpen ? 'mx-auto' : ''}`}>
-              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-sm shrink-0">
-                <Code2 className="w-4 h-4" />
-              </div>
-              {(!isCollapsed || isMobileOpen) && (
-                <div className="min-w-0">
-                  <h1 className="text-sm font-bold text-[var(--text-primary)] tracking-tight flex items-center gap-1.5 truncate">
-                    CodeReview<span className="text-indigo-500">Pro</span>
-                  </h1>
-                  <p className="text-[10px] text-[var(--text-muted)] font-mono truncate">Enterprise Edition</p>
+          {/* Workspace User Pill Header (Syncra Style) */}
+          <div className="h-16 flex items-center justify-between px-4 border-b border-[var(--border-subtle)]">
+            {(!isCollapsed || isMobileOpen) ? (
+              <button
+                onClick={onOpenProfile}
+                className="flex items-center justify-between w-full min-w-0 pr-1 hover:opacity-80 transition-opacity text-left cursor-pointer group"
+                title="Manage Workspace & Profile"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-blue-500/20 shrink-0 group-hover:scale-105 transition-transform">
+                    {user?.avatarInitials || 'SS'}
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider truncate">
+                      {user?.name || 'SAURABH SINGH'}
+                    </h2>
+                    <p className="text-[10px] text-[var(--text-muted)] truncate">{user?.workspace || 'Personal Workspace'}</p>
+                  </div>
                 </div>
-              )}
-            </div>
-
-            {/* Desktop Collapse Button */}
-            <button
-              onClick={() => setIsCollapsed(!isCollapsed)}
-              className={`hidden md:block p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors ${
-                isCollapsed ? 'hidden' : 'block'
-              }`}
-              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
+                <ChevronDown className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 group-hover:text-[var(--text-primary)] transition-colors" />
+              </button>
+            ) : (
+              <button 
+                onClick={onOpenProfile}
+                className="w-8 h-8 mx-auto rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-blue-500/20 cursor-pointer"
+                title={user?.name || 'Profile'}
+              >
+                {user?.avatarInitials || 'SS'}
+              </button>
+            )}
 
             {/* Mobile Close Button */}
             <button
               onClick={() => setIsMobileOpen(false)}
-              className="md:hidden p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
-              title="Close menu"
+              className="md:hidden p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] ml-2"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Navigation Items */}
+          {/* Navigation Links */}
           <div className="p-3 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -97,59 +114,68 @@ export default function Sidebar({
                     setActiveNav(item.id);
                     setIsMobileOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-indigo-600/10 text-indigo-500 border border-indigo-500/20'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent'
+                      ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-bold shadow-sm'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
                   } ${isCollapsed && !isMobileOpen ? 'justify-center px-0' : ''}`}
                   title={isCollapsed && !isMobileOpen ? item.label : undefined}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-indigo-500' : 'text-[var(--text-muted)]'}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-[var(--text-muted)]'}`} />
                   {(!isCollapsed || isMobileOpen) && (
                     <span className="flex-1 text-left truncate">{item.label}</span>
                   )}
-                  {(!isCollapsed || isMobileOpen) && item.badge && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                      {item.badge}
+                  {(!isCollapsed || isMobileOpen) && item.count && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--bg-elevated)] text-[var(--text-muted)]">
+                      {item.count}
                     </span>
                   )}
                 </button>
               );
             })}
           </div>
-        </div>
 
-        {/* Bottom Telemetry Section */}
-        <div className="p-3 border-t border-[var(--border-subtle)] space-y-3">
+          {/* Projects Section (Syncra Style) */}
           {(!isCollapsed || isMobileOpen) && (
-            <div className="theme-card p-2.5 rounded-xl text-[11px] space-y-1.5">
-              <div className="text-[var(--text-muted)] font-bold uppercase text-[9px] tracking-wider flex items-center justify-between">
-                <span>Parallel Agent Core</span>
-                <span className="text-emerald-500 font-mono">4 Active</span>
+            <div className="px-4 pt-4 border-t border-[var(--border-subtle)] space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                <span>Projects</span>
+                <span className="text-[10px] text-blue-600 font-mono font-semibold">2 Active</span>
               </div>
-              <div className="grid grid-cols-2 gap-1 text-[10px] text-[var(--text-secondary)] font-mono">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>Style</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Bug</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>AppSec</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Perf</span>
+
+              <div className="space-y-1">
+                {projects.map((proj) => (
+                  <button
+                    key={proj.id}
+                    onClick={() => {
+                      if (onSelectProject) onSelectProject(proj.url);
+                      setActiveNav('workbench');
+                      setIsMobileOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer group text-left"
+                  >
+                    <span className={`w-2 h-2 rounded-full ${proj.color} group-hover:scale-125 transition-transform`}></span>
+                    <span className="truncate flex-1">{proj.name}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity">Load ▸</span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
+        </div>
 
-          {/* Engine Status Badge */}
-          <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl theme-card text-xs ${isCollapsed && !isMobileOpen ? 'justify-center' : 'justify-between'}`}>
+        {/* Bottom Section: Status Indicator & Collapse button */}
+        <div className="p-3 border-t border-[var(--border-subtle)] space-y-2">
+          {/* Status Indicator */}
+          <div className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-[var(--bg-elevated)] text-xs ${isCollapsed && !isMobileOpen ? 'justify-center' : 'justify-between'}`}>
             <div className="flex items-center gap-2 min-w-0">
-              {apiHealth === 'online' ? (
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-              ) : (
-                <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0"></span>
-              )}
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
               {(!isCollapsed || isMobileOpen) && (
-                <span className="text-[11px] text-[var(--text-secondary)] font-medium truncate">
-                  {apiHealth === 'online' ? 'Core Engine Ready' : 'Engine Offline'}
+                <span className="text-[11px] text-[var(--text-secondary)] font-semibold truncate">
+                  Core Engine Ready
                 </span>
               )}
             </div>
@@ -157,6 +183,15 @@ export default function Sidebar({
               <span className="text-[10px] text-[var(--text-muted)] font-mono">{latency}ms</span>
             )}
           </div>
+
+          {/* Desktop Collapse Button */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="hidden md:flex w-full items-center justify-center py-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors text-xs cursor-pointer"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <ChevronLeft className={`w-4 h-4 transition-transform ${isCollapsed ? 'rotate-180' : ''}`} />
+          </button>
         </div>
       </aside>
     </>

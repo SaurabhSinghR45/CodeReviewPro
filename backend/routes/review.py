@@ -1,7 +1,7 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from database import get_db
 from models import Review
@@ -85,15 +85,23 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
     language = req.language or "auto"
     agents_cfg = req.agents_config.model_dump() if req.agents_config else {"style": True, "bugs": True, "security": True, "performance": True}
     strictness = req.strictness or "standard"
-
-    orchestrator_res = await run_orchestrator(code_to_review, language, agents_config=agents_cfg, strictness=strictness)
+    orchestrator_res = await run_orchestrator(
+        code_to_review, 
+        language, 
+        agents_config=agents_cfg, 
+        strictness=strictness,
+        problem_context=req.problem_context,
+        constraints=req.constraints
+    )
 
     health_data = orchestrator_res.get("health_score", {
         "score": 100, "grade": "A+", "style_score": 100, "bug_score": 100, "security_score": 100, "performance_score": 100
     })
 
-    # 5. Save to database
+    # 5. Save to database with user_email isolation
+    user_email = req.user_email.strip() if req.user_email and req.user_email.strip() else "guest@codereview.pro"
     db_review = Review(
+        user_email=user_email,
         source_url=source_url,
         language=language,
         code_snippet=code_to_review,
@@ -103,7 +111,8 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
         bug_findings=json.dumps(orchestrator_res["bugs"]),
         security_findings=json.dumps(orchestrator_res["security"]),
         performance_findings=json.dumps(orchestrator_res.get("performance", [])),
-        summary=orchestrator_res["summary"]
+        summary=orchestrator_res["summary"],
+        remediated_code=orchestrator_res.get("remediated_code", "")
     )
     db.add(db_review)
     db.commit()
@@ -120,12 +129,16 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
         security=orchestrator_res["security"],
         performance=orchestrator_res.get("performance", []),
         summary=db_review.summary,
+        remediated_code=db_review.remediated_code or orchestrator_res.get("remediated_code", ""),
         created_at=db_review.created_at.isoformat()
     )
 
 @router.get("/reviews", response_model=List[ReviewListItem])
-def list_reviews(db: Session = Depends(get_db)):
-    reviews = db.query(Review).order_by(Review.created_at.desc()).all()
+def list_reviews(user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(Review)
+    if user_email and user_email.strip() and user_email.strip() != "all":
+        query = query.filter(Review.user_email == user_email.strip())
+    reviews = query.order_by(Review.created_at.desc()).all()
     return [
         ReviewListItem(
             id=r.id,

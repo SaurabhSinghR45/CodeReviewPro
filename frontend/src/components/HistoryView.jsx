@@ -7,21 +7,29 @@ const GithubIcon = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-export default function HistoryView({ onSelectReview }) {
+export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
+  const isGuest = !user || user.name === 'Guest Developer' || !user.isVerified;
   const [reviews, setReviews] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!isGuest);
   const [errorMsg, setErrorMsg] = useState('');
   const [selectedLoadingId, setSelectedLoadingId] = useState(null);
 
   const fetchHistory = async () => {
+    if (isGuest) {
+      setReviews([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setErrorMsg('');
     try {
-      const res = await fetch('/reviews');
+      const userEmail = user?.email || '';
+      const res = await fetch(`/reviews?user_email=${encodeURIComponent(userEmail)}`);
       if (!res.ok) throw new Error('Failed to load review history');
       const data = await res.json();
-      setReviews(data);
+      setReviews(Array.isArray(data) ? data : []);
     } catch (err) {
       setErrorMsg(err.message || 'Unable to connect to database history.');
     } finally {
@@ -31,7 +39,7 @@ export default function HistoryView({ onSelectReview }) {
 
   useEffect(() => {
     fetchHistory();
-  }, []);
+  }, [user?.email, isGuest]);
 
   const handleSelect = async (id) => {
     setSelectedLoadingId(id);

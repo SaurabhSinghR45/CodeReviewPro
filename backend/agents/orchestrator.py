@@ -1,9 +1,11 @@
 import asyncio
+import re
 from agents.style_agent import analyze_style
 from agents.bug_agent import analyze_bugs
 from agents.security_agent import analyze_security
 from agents.performance_agent import analyze_performance
 from agents.summary_agent import generate_summary
+from agents.remediation_agent import generate_remediated_code
 
 def calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues):
     # Category sub-scores starting at 100
@@ -54,24 +56,56 @@ def calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues):
         "performance_score": perf_sub
     }
 
-async def run_orchestrator(code: str, language: str = "auto", agents_config: dict = None, strictness: str = "standard") -> dict:
+def sanitize_line_numbers(issues_list, total_lines: int):
+    """Ensure line numbers strictly match the user's actual source code line count"""
+    for item in issues_list:
+        if isinstance(item, dict) and "line" in item and item["line"]:
+            line_str = str(item["line"])
+            nums = re.findall(r'\d+', line_str)
+            if nums:
+                val = int(nums[0])
+                if val > total_lines:
+                    # Clamp to last valid line
+                    item["line"] = f"Line {total_lines}"
+                elif val < 1:
+                    item["line"] = "Line 1"
+
+async def run_orchestrator(
+    code: str, 
+    language: str = "auto", 
+    agents_config: dict = None, 
+    strictness: str = "standard",
+    problem_context: str = None,
+    constraints: str = None
+) -> dict:
     if agents_config is None:
         agents_config = {"style": True, "bugs": True, "security": True, "performance": True}
+
+    # IMPORTANT: Keep code exactly intact so line 1 is line 1!
+    # If problem context exists, append it as metadata footer so code line numbers are NEVER shifted
+    code_payload = code
+    if problem_context or constraints:
+        extra_ctx = "\n\n/* [DSA PROBLEM CONTEXT & CONSTRAINTS] */\n"
+        if problem_context:
+            extra_ctx += f"/* Goal: {problem_context} */\n"
+        if constraints:
+            extra_ctx += f"/* Constraints: {constraints} */\n"
+        code_payload = f"{code}{extra_ctx}"
 
     tasks = []
     task_keys = []
 
     if agents_config.get("style", True):
-        tasks.append(analyze_style(code, language))
+        tasks.append(analyze_style(code_payload, language))
         task_keys.append("style")
     if agents_config.get("bugs", True):
-        tasks.append(analyze_bugs(code, language))
+        tasks.append(analyze_bugs(code_payload, language))
         task_keys.append("bugs")
     if agents_config.get("security", True):
-        tasks.append(analyze_security(code, language))
+        tasks.append(analyze_security(code_payload, language))
         task_keys.append("security")
     if agents_config.get("performance", True):
-        tasks.append(analyze_performance(code, language))
+        tasks.append(analyze_performance(code_payload, language))
         task_keys.append("performance")
 
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
@@ -94,14 +128,22 @@ async def run_orchestrator(code: str, language: str = "auto", agents_config: dic
         elif key == "performance":
             perf_res = res if isinstance(res, dict) else {"performance": [], "error": str(res)}
 
-    # Generate staff engineer summary
-    summary_text = await generate_summary(style_res, bug_res, sec_res)
-
-    # Compute Health Score
     style_issues = style_res.get("issues", [])
     bug_issues = bug_res.get("bugs", [])
     sec_issues = sec_res.get("security", [])
     perf_issues = perf_res.get("performance", [])
+
+    # Parallelize executive summary & 100% complete remediated code generation
+    summary_task = generate_summary(style_res, bug_res, sec_res)
+    remediation_task = generate_remediated_code(code, language, style_issues, bug_issues, sec_issues, perf_issues)
+    summary_text, remediated_code_text = await asyncio.gather(summary_task, remediation_task)
+
+    # Clamp line numbers so they NEVER exceed user's original line count
+    total_lines = max(1, len(code.splitlines()))
+    sanitize_line_numbers(style_issues, total_lines)
+    sanitize_line_numbers(bug_issues, total_lines)
+    sanitize_line_numbers(sec_issues, total_lines)
+    sanitize_line_numbers(perf_issues, total_lines)
 
     health_data = calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues)
 
@@ -111,5 +153,6 @@ async def run_orchestrator(code: str, language: str = "auto", agents_config: dic
         "security": sec_issues,
         "performance": perf_issues,
         "summary": summary_text,
-        "health_score": health_data
+        "health_score": health_data,
+        "remediated_code": remediated_code_text
     }

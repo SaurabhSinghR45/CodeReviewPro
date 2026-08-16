@@ -14,6 +14,9 @@ class ReviewRequest(BaseModel):
     selected_files: Optional[List[str]] = None
     agents_config: Optional[AgentConfig] = Field(default_factory=AgentConfig)
     strictness: Optional[str] = "standard"  # lenient, standard, strict
+    user_email: Optional[str] = "guest@codereview.pro"
+    problem_context: Optional[str] = None
+    constraints: Optional[str] = None
 
 class RepoFileItem(BaseModel):
     path: str
@@ -75,6 +78,7 @@ class ReviewResponse(BaseModel):
     security: List[SecurityFindingItem] = []
     performance: List[PerformanceFindingItem] = []
     summary: str
+    remediated_code: Optional[str] = ""
     created_at: str
 
 class ReviewListItem(BaseModel):

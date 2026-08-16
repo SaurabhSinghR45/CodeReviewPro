@@ -2,11 +2,29 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+    --bg-main: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f1f5f9;
+    --bg-card: #ffffff;
+    --bg-editor: #ffffff;
+    --bg-gutter: #f8fafc;
+    --border-subtle: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  }
+
+  .dark {
     color-scheme: dark;
     --bg-main: #0b0f19;
     --bg-surface: #111827;
     --bg-elevated: #162032;
-    --bg-card: #141d2e;
+    --bg-card: #131c2e;
     --bg-editor: #090e18;
     --bg-gutter: #0c121e;
     --border-subtle: #1f293d;
@@ -14,31 +32,15 @@
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
-    --accent: #6366f1;
-    --accent-hover: #4f46e5;
-  }
-
-  .light {
-    color-scheme: light;
-    --bg-main: #f8fafc;
-    --bg-surface: #ffffff;
-    --bg-elevated: #f1f5f9;
-    --bg-card: #ffffff;
-    --bg-editor: #fbfcfe;
-    --bg-gutter: #f1f5f9;
-    --border-subtle: #e2e8f0;
-    --border-strong: #cbd5e1;
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --text-muted: #94a3b8;
-    --accent: #4f46e5;
-    --accent-hover: #4338ca;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.3);
   }
 
   body {
     background-color: var(--bg-main);
     color: var(--text-primary);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
     overflow-x: hidden;
     letter-spacing: -0.015em;
@@ -70,7 +72,62 @@
   background: var(--border-strong);
 }
 
-/* Linear-style UI panels and cards */
+/* Minimalist Syncra-style Cards & Panels */
+.syncra-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--card-shadow);
+  border-radius: 1.25rem;
+}
+
+.syncra-card-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.syncra-card-hover:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.06), 0 8px 10px -6px rgb(0 0 0 / 0.04);
+}
+
+/* Pastel Gradient Metric Cards (Syncra Style) */
+.stat-card-blue {
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.9) 0%, rgba(219, 234, 254, 0.4) 100%);
+  border: 1px solid rgba(191, 219, 254, 0.7);
+}
+.dark .stat-card-blue {
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.2) 0%, rgba(30, 41, 59, 0.4) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.stat-card-green {
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.9) 0%, rgba(209, 250, 229, 0.4) 100%);
+  border: 1px solid rgba(187, 247, 208, 0.7);
+}
+.dark .stat-card-green {
+  background: linear-gradient(135deg, rgba(6, 78, 59, 0.2) 0%, rgba(30, 41, 59, 0.4) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.stat-card-purple {
+  background: linear-gradient(135deg, rgba(250, 245, 255, 0.9) 0%, rgba(243, 232, 255, 0.4) 100%);
+  border: 1px solid rgba(233, 213, 255, 0.7);
+}
+.dark .stat-card-purple {
+  background: linear-gradient(135deg, rgba(88, 28, 135, 0.2) 0%, rgba(30, 41, 59, 0.4) 100%);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.stat-card-amber {
+  background: linear-gradient(135deg, rgba(254, 252, 232, 0.9) 0%, rgba(254, 243, 199, 0.4) 100%);
+  border: 1px solid rgba(253, 230, 138, 0.7);
+}
+.dark .stat-card-amber {
+  background: linear-gradient(135deg, rgba(120, 53, 15, 0.2) 0%, rgba(30, 41, 59, 0.4) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+/* Theme panel helpers */
 .theme-panel {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -79,10 +136,6 @@
 .theme-card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-}
-
-.theme-card:hover {
-  border-color: var(--border-strong);
 }
 
 /* Monaco-style code gutter */
@@ -99,22 +152,15 @@
 
 /* Git diff highlighting */
 .diff-del {
-  background-color: rgba(244, 63, 94, 0.12);
-  color: #f43f5e;
-  border-left: 2px solid #f43f5e;
+  background-color: rgba(244, 63, 94, 0.08);
+  color: #e11d48;
+  border-left: 2px solid #e11d48;
 }
 
 .diff-add {
-  background-color: rgba(16, 185, 129, 0.12);
-  color: #10b981;
-  border-left: 2px solid #10b981;
-}
-
-/* Terminal window */
-.terminal-window {
-  background: var(--bg-editor);
-  border: 1px solid var(--border-subtle);
-  font-family: 'JetBrains Mono', monospace;
+  background-color: rgba(16, 185, 129, 0.08);
+  color: #059669;
+  border-left: 2px solid #059669;
 }
 
 /* Key cap badge */
@@ -128,19 +174,18 @@
   color: var(--text-secondary);
 }
 
-/* Print optimizations */
-@media print {
-  body {
-    background: #ffffff !important;
-    color: #000000 !important;
-  }
-  .no-print, aside, header {
-    display: none !important;
-  }
-  .theme-panel, .theme-card {
-    background: #ffffff !important;
-    color: #000000 !important;
-    border: 1px solid #e2e8f0 !important;
-    box-shadow: none !important;
-  }
+/* Primary Syncra Action Button */
+.syncra-btn-primary {
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.syncra-btn-primary:hover {
+  background: #1d4ed8;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
 }
