@@ -29,7 +29,9 @@ import {
   ShieldAlert,
   Award,
   Brain,
-  ChevronDown
+  ChevronDown,
+  ImagePlus,
+  X
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import AgentTopology from './AgentTopology';
@@ -103,11 +105,11 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
   const [language, setLanguage] = useState(() => {
     return sessionStorage.getItem('cr_language') || 'auto';
   });
-  const [problemContext, setProblemContext] = useState(() => {
-    return sessionStorage.getItem('cr_problem_context') || '';
+  const [problemDescription, setProblemDescription] = useState(() => {
+    return sessionStorage.getItem('cr_problem_description') || sessionStorage.getItem('cr_problem_context') || '';
   });
-  const [constraints, setConstraints] = useState(() => {
-    return sessionStorage.getItem('cr_constraints') || '';
+  const [problemImage, setProblemImage] = useState(() => {
+    return sessionStorage.getItem('cr_problem_image') || '';
   });
   const [showDsaPanel, setShowDsaPanel] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -130,12 +132,12 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
   }, [language]);
 
   useEffect(() => {
-    try { sessionStorage.setItem('cr_problem_context', problemContext); } catch (e) {}
-  }, [problemContext]);
+    try { sessionStorage.setItem('cr_problem_description', problemDescription); } catch (e) {}
+  }, [problemDescription]);
 
   useEffect(() => {
-    try { sessionStorage.setItem('cr_constraints', constraints); } catch (e) {}
-  }, [constraints]);
+    try { sessionStorage.setItem('cr_problem_image', problemImage); } catch (e) {}
+  }, [problemImage]);
 
   const isGuest = !user || user.name === 'Guest Developer' || !user.isVerified;
   const [stats, setStats] = useState({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
@@ -374,8 +376,8 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
         agents_config: agentsConfig,
         strictness: strictness,
         user_email: user?.email || 'guest@codereview.pro',
-        problem_context: problemContext.trim() || undefined,
-        constraints: constraints.trim() || undefined
+        problem_context: problemDescription.trim() || undefined,
+        problem_image: problemImage || undefined
       };
 
       if (inputMode === 'url') {
@@ -917,7 +919,7 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
                 />
               </div>
 
-              {/* DSA Problem Context & Constraints Collapsible Card (LeetCode / GFG) */}
+              {/* Single Unified DSA Problem Statement, Constraints & Image Attachment Card */}
               <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] overflow-hidden mt-3 shadow-sm">
                 <button
                   type="button"
@@ -926,9 +928,9 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
                 >
                   <div className="flex items-center gap-2 flex-wrap">
                     <Brain className="w-4 h-4 text-blue-600 shrink-0" />
-                    <span>DSA Problem Context & Constraints (LeetCode / GFG / Codeforces)</span>
+                    <span>Problem Statement, Examples & Constraints (LeetCode / GFG)</span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 font-normal">
-                      Optional • For 100% Accurate DSA Review
+                      Single Field • Supports Screenshots/Images
                     </span>
                   </div>
                   <ChevronDown className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${showDsaPanel ? 'rotate-180' : ''}`} />
@@ -942,45 +944,100 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
                       <button
                         type="button"
                         onClick={() => {
-                          setProblemContext('Given a weighted directed graph with V vertices and edges. Find shortest paths from src node.');
-                          setConstraints('1 <= V <= 10^5, 0 <= E <= 10^5. Time limit: 1.0s (Target: O((V+E)logV)). Space limit: 256MB.');
+                          setProblemDescription('9. Palindrome Number (LeetCode)\nGiven an integer x, return true if x is a palindrome, and false otherwise.\n\nExample 1: Input: x = 121, Output: true\nExample 2: Input: x = -121, Output: false\nExample 3: Input: x = 10, Output: false\n\nConstraints: -2^31 <= x <= 2^31 - 1. Follow up: Could you solve it without converting the integer to a string?');
                         }}
                         className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-blue-500/10 hover:text-blue-600 font-mono text-[10px] text-[var(--text-secondary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
                       >
-                        LeetCode Graph (Dijkstra)
+                        9. Palindrome Number
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          setProblemContext('Given array of integers, find maximum subarray sum with at least one element.');
-                          setConstraints('1 <= N <= 10^6, -10^9 <= nums[i] <= 10^9. Target: O(N) time, O(1) space.');
+                          setProblemDescription('743. Network Delay Time\nYou are given a network of n nodes, labeled from 1 to n. You are also given times, a list of travel times as directed edges times[i] = (ui, vi, wi).\nWe will send a signal from a given node k. Return the minimum time it takes for all the n nodes to receive the signal.\n\nConstraints:\n1 <= k <= n <= 100\n1 <= times.length <= 6000\nTarget: Dijkstra O((V+E)logV)');
                         }}
                         className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-blue-500/10 hover:text-blue-600 font-mono text-[10px] text-[var(--text-secondary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
                       >
-                        Kadane DP / Array
+                        743. Network Delay Time (Dijkstra)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProblemDescription('53. Maximum Subarray\nGiven an integer array nums, find the subarray with the largest sum, and return its sum.\n\nExample 1: nums = [-2,1,-3,4,-1,2,1,-5,4], Output: 6 (4 + -1 + 2 + 1)\nConstraints: 1 <= nums.length <= 10^5, -10^4 <= nums[i] <= 10^4. Target: O(N) Kadane');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-blue-500/10 hover:text-blue-600 font-mono text-[10px] text-[var(--text-secondary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
+                      >
+                        53. Maximum Subarray (Kadane)
                       </button>
                     </div>
 
+                    {/* Single Unified Problem Statement & Constraints Textarea */}
                     <div className="space-y-1">
-                      <label className="text-[11px] font-semibold text-[var(--text-secondary)]">Problem Description / Goal</label>
-                      <input
-                        type="text"
-                        value={problemContext}
-                        onChange={(e) => setProblemContext(e.target.value)}
-                        placeholder="e.g. LeetCode 743. Network Delay Time / Dijkstra shortest distance"
-                        className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-blue-500 font-mono"
+                      <div className="flex items-center justify-between text-[11px] text-[var(--text-secondary)]">
+                        <label className="font-semibold">Problem Description, Examples & Constraints</label>
+                        <span className="text-[10px] text-[var(--text-muted)] font-mono">Paste directly from LeetCode / GFG</span>
+                      </div>
+                      <textarea
+                        rows={4}
+                        value={problemDescription}
+                        onChange={(e) => setProblemDescription(e.target.value)}
+                        onPaste={(e) => {
+                          const items = e.clipboardData?.items;
+                          if (items) {
+                            for (let i = 0; i < items.length; i++) {
+                              if (items[i].type.indexOf('image') !== -1) {
+                                const file = items[i].getAsFile();
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (event) => {
+                                    setProblemImage(event.target.result);
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }
+                            }
+                          }
+                        }}
+                        placeholder="Paste problem description, examples and constraints here (or press Ctrl+V to paste graph/tree screenshot)..."
+                        className="w-full p-3 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-blue-500 font-mono leading-relaxed resize-y"
                       />
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-semibold text-[var(--text-secondary)]">Constraints & Bounds (Time / Space Limits)</label>
-                      <input
-                        type="text"
-                        value={constraints}
-                        onChange={(e) => setConstraints(e.target.value)}
-                        placeholder="e.g. 1 <= V <= 10^5, Time limit 1.0s (Requires O((V+E)logV))"
-                        className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-blue-500 font-mono"
-                      />
+                    {/* Image Attachment Bar */}
+                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                      <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer shadow-sm">
+                        <ImagePlus className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Attach Problem Diagram / Graph Image</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                setProblemImage(event.target.result);
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+
+                      {problemImage && (
+                        <div className="flex items-center gap-2 p-1.5 px-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                          <img src={problemImage} alt="Diagram Preview" className="w-8 h-8 rounded object-cover border border-blue-500/30" />
+                          <span className="text-[10px] font-mono text-blue-600 font-bold">Image Attached</span>
+                          <button
+                            type="button"
+                            onClick={() => setProblemImage('')}
+                            className="p-1 text-[var(--text-muted)] hover:text-rose-500 transition-colors cursor-pointer"
+                            title="Remove Image"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

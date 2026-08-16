@@ -26,10 +26,11 @@ The JSON object MUST follow this exact schema:
 If no security vulnerabilities are found, return {"security": []}.
 """
 
-async def analyze_security(code: str, language: str = "auto") -> dict:
+async def analyze_security(code: str, language: str = "auto", problem_context: str = None) -> dict:
     fallback = {"security": []}
     numbered_lines = "\n".join([f"{i+1} | {line}" for i, line in enumerate(code.splitlines())])
-    user_prompt = f"Language: {language}\n\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
+    ctx_section = f"\nDSA Problem Context & Constraints:\n{problem_context}\n" if problem_context else ""
+    user_prompt = f"Language: {language}\n{ctx_section}\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
 
     try:
         raw_response = await call_llm(SECURITY_SYSTEM_PROMPT, user_prompt, max_tokens=2500)

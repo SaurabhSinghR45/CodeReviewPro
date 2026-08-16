@@ -13,10 +13,10 @@ Generate the COMPLETE, 100% COMPILABLE, FULLY FIXED, AND OPTIMIZED source code t
 
 CRITICAL RULES:
 1. Return ONLY the raw code inside a single code block (e.g. ```cpp ... ``` or ```python ... ```).
-2. DO NOT invent undeclared variables. Ensure every variable is declared with valid type before use.
-3. DO NOT change user variable names unless they cause compile errors or bugs.
-4. Ensure 100% syntax correctness with all matching braces `{ }` and semicolons `;`.
-5. Do NOT include explanations, conversational filler, or preamble. Return ONLY the compilable code.
+2. DO NOT add markdown headers, comments like "# class Solution", or conversational text.
+3. DO NOT invent undeclared variables. Ensure every variable is declared with valid type before use.
+4. DO NOT change user variable names unless they cause compile errors or bugs.
+5. Ensure 100% syntax correctness with all matching braces `{ }` and semicolons `;`.
 """
 
 async def generate_remediated_code(code: str, language: str, style_findings: list, bug_findings: list, sec_findings: list, perf_findings: list) -> str:
@@ -46,8 +46,12 @@ Generate the complete, 100% working, compilable, and optimized remediated code:"
         raw_response = await call_llm(REMEDIATION_SYSTEM_PROMPT, user_prompt, max_tokens=3000)
         # Extract code from markdown block
         match = re.search(r'```(?:[a-zA-Z0-9_+-]+)?\n([\s\S]*?)```', raw_response)
-        if match:
-            return match.group(1).strip()
-        return raw_response.strip() if raw_response else code
+        clean_code = match.group(1).strip() if match else raw_response.strip()
+
+        # Sanitize any stray markdown headers like '# class Solution' or '#class Solution'
+        clean_code = re.sub(r'^\s*#\s*(class\b|def\b|public\b|int\b|void\b|struct\b|include\b|import\b)', r'\1', clean_code, flags=re.MULTILINE)
+        clean_code = clean_code.replace('#class', 'class')
+
+        return clean_code if clean_code else code
     except Exception:
         return code

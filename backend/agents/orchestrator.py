@@ -70,6 +70,52 @@ def sanitize_line_numbers(issues_list, total_lines: int):
                 elif val < 1:
                     item["line"] = "Line 1"
 
+def deduplicate_findings(style_issues, bug_issues, sec_issues, perf_issues):
+    """Deduplicate findings so user is not bombarded with repeated issues on the same line"""
+    seen_lines = set()
+    unique_bugs = []
+    unique_sec = []
+    unique_perf = []
+    unique_style = []
+
+    # Priority 1: Bugs (Real logic flaws)
+    for b in bug_issues:
+        line_key = str(b.get("line", "")).strip()
+        if line_key and line_key in seen_lines:
+            continue
+        if line_key:
+            seen_lines.add(line_key)
+        unique_bugs.append(b)
+
+    # Priority 2: Security vulnerabilities
+    for s in sec_issues:
+        line_key = str(s.get("line", "")).strip()
+        if line_key and line_key in seen_lines:
+            continue
+        if line_key:
+            seen_lines.add(line_key)
+        unique_sec.append(s)
+
+    # Priority 3: Performance bottlenecks
+    for p in perf_issues:
+        line_key = str(p.get("line", "")).strip()
+        if line_key and line_key in seen_lines:
+            continue
+        if line_key:
+            seen_lines.add(line_key)
+        unique_perf.append(p)
+
+    # Priority 4: Style (only if not already flagged by higher priority agents)
+    for st in style_issues:
+        line_key = str(st.get("line", "")).strip()
+        if line_key and line_key in seen_lines:
+            continue
+        if line_key:
+            seen_lines.add(line_key)
+        unique_style.append(st)
+
+    return unique_style, unique_bugs, unique_sec, unique_perf
+
 async def run_orchestrator(
     code: str, 
     language: str = "auto", 
@@ -81,31 +127,30 @@ async def run_orchestrator(
     if agents_config is None:
         agents_config = {"style": True, "bugs": True, "security": True, "performance": True}
 
-    # IMPORTANT: Keep code exactly intact so line 1 is line 1!
-    # If problem context exists, append it as metadata footer so code line numbers are NEVER shifted
-    code_payload = code
+    # Keep code strictly clean and line numbers pure
+    combined_ctx = ""
     if problem_context or constraints:
-        extra_ctx = "\n\n/* [DSA PROBLEM CONTEXT & CONSTRAINTS] */\n"
+        parts = []
         if problem_context:
-            extra_ctx += f"/* Goal: {problem_context} */\n"
+            parts.append(problem_context)
         if constraints:
-            extra_ctx += f"/* Constraints: {constraints} */\n"
-        code_payload = f"{code}{extra_ctx}"
+            parts.append(f"Constraints: {constraints}")
+        combined_ctx = "\n".join(parts)
 
     tasks = []
     task_keys = []
 
     if agents_config.get("style", True):
-        tasks.append(analyze_style(code_payload, language))
+        tasks.append(analyze_style(code, language, problem_context=combined_ctx))
         task_keys.append("style")
     if agents_config.get("bugs", True):
-        tasks.append(analyze_bugs(code_payload, language))
+        tasks.append(analyze_bugs(code, language, problem_context=combined_ctx))
         task_keys.append("bugs")
     if agents_config.get("security", True):
-        tasks.append(analyze_security(code_payload, language))
+        tasks.append(analyze_security(code, language, problem_context=combined_ctx))
         task_keys.append("security")
     if agents_config.get("performance", True):
-        tasks.append(analyze_performance(code_payload, language))
+        tasks.append(analyze_performance(code, language, problem_context=combined_ctx))
         task_keys.append("performance")
 
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
@@ -128,22 +173,27 @@ async def run_orchestrator(
         elif key == "performance":
             perf_res = res if isinstance(res, dict) else {"performance": [], "error": str(res)}
 
-    style_issues = style_res.get("issues", [])
-    bug_issues = bug_res.get("bugs", [])
-    sec_issues = sec_res.get("security", [])
-    perf_issues = perf_res.get("performance", [])
+    raw_style = style_res.get("issues", [])
+    raw_bugs = bug_res.get("bugs", [])
+    raw_sec = sec_res.get("security", [])
+    raw_perf = perf_res.get("performance", [])
+
+    # Clamp line numbers so they NEVER exceed user's original line count
+    total_lines = max(1, len(code.splitlines()))
+    sanitize_line_numbers(raw_style, total_lines)
+    sanitize_line_numbers(raw_bugs, total_lines)
+    sanitize_line_numbers(raw_sec, total_lines)
+    sanitize_line_numbers(raw_perf, total_lines)
+
+    # Deduplicate findings so multiple agents don't create duplicate cards on the same line
+    style_issues, bug_issues, sec_issues, perf_issues = deduplicate_findings(
+        raw_style, raw_bugs, raw_sec, raw_perf
+    )
 
     # Parallelize executive summary & 100% complete remediated code generation
     summary_task = generate_summary(style_res, bug_res, sec_res)
     remediation_task = generate_remediated_code(code, language, style_issues, bug_issues, sec_issues, perf_issues)
     summary_text, remediated_code_text = await asyncio.gather(summary_task, remediation_task)
-
-    # Clamp line numbers so they NEVER exceed user's original line count
-    total_lines = max(1, len(code.splitlines()))
-    sanitize_line_numbers(style_issues, total_lines)
-    sanitize_line_numbers(bug_issues, total_lines)
-    sanitize_line_numbers(sec_issues, total_lines)
-    sanitize_line_numbers(perf_issues, total_lines)
 
     health_data = calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues)
 

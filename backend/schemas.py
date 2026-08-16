@@ -17,6 +17,7 @@ class ReviewRequest(BaseModel):
     user_email: Optional[str] = "guest@codereview.pro"
     problem_context: Optional[str] = None
     constraints: Optional[str] = None
+    problem_image: Optional[str] = None
 
 class RepoFileItem(BaseModel):
     path: str

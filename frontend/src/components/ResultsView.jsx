@@ -13,25 +13,19 @@ import {
   Download, 
   Printer, 
   FileCode, 
-  GitCommit, 
-  Award,
-  Layers,
-  Wand2,
-  RefreshCw,
-  Eye,
+  Layers, 
   CheckCircle2,
-  Edit3,
   SplitSquareVertical,
   SlidersHorizontal,
-  Code2,
-  ArrowRight,
   Maximize2,
   Minimize2,
-  Undo2,
   Plus,
   Minus,
   Loader2,
-  CheckCheck
+  CheckCheck,
+  MessageSquareQuote,
+  PlusCircle,
+  Wand2
 } from 'lucide-react';
 import HealthRadar from './HealthRadar';
 
@@ -42,9 +36,8 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const [highlightedLine, setHighlightedLine] = useState(null);
   const [selectedFindingIdx, setSelectedFindingIdx] = useState(null);
   const [copiedPr, setCopiedPr] = useState(false);
-  const [copiedPatchIdx, setCopiedPatchIdx] = useState(null);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [copiedRemediated, setCopiedRemediated] = useState(false);
+  const [copiedCodeMode, setCopiedCodeMode] = useState(null); // 'clean' | 'comments'
+  const [copiedRemediatedMode, setCopiedRemediatedMode] = useState(null); // 'clean' | 'comments'
   const [isReAuditing, setIsReAuditing] = useState(false);
   const [allFixesApplied, setAllFixesApplied] = useState(false);
   
@@ -52,7 +45,7 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const [layoutMode, setLayoutMode] = useState('split'); 
   
   // Manual continuous width percentage slider (20% to 80%) with smooth +/- 1% stepping
-  const [inspectorWidthPercent, setInspectorWidthPercent] = useState(50);
+  const [inspectorWidthPercent, setInspectorWidthPercent] = useState(55);
   const [isExpandedHeight, setIsExpandedHeight] = useState(false);
 
   // Track applied / overridden state per finding index: { [idx]: 'fixed' | 'original' }
@@ -135,12 +128,22 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
     }).join('\n');
   };
 
+  // Strip comments helper (For pure code copy)
+  const stripComments = (source) => {
+    if (!source) return '';
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter(line => !line.trim().startsWith('//'))
+      .join('\n')
+      .replace(/\n\s*\n\s*\n/g, '\n\n');
+  };
+
   // Safe Remediated Code (Prioritize Backend Agent Remediated Code)
   const getCleanRemediatedCode = () => {
     if (remediated_code && remediated_code.trim() && remediated_code.includes('{')) {
       return formatLeetCodeIndentation(remediated_code.trim());
     }
-    // Fallback
     return formatLeetCodeIndentation(code_snippet || currentCode || '');
   };
 
@@ -149,15 +152,88 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const originalLines = (code_snippet || '').split('\n');
   const codeLines = currentCode.split('\n');
 
-  // Semantic diff comparator: Ignores harmless spacing and whitespace differences
-  const isLineModified = (origLine, remLine) => {
-    if (!origLine && !remLine) return false;
-    if (!origLine || !remLine) return true;
-    // Strip all whitespaces and semicolons for comparison so if(n==0) vs if (n == 0) is considered IDENTICAL!
-    const normOrig = origLine.replace(/\s+/g, '').replace(/[;]/g, '');
-    const normRem = remLine.replace(/\s+/g, '').replace(/[;]/g, '');
-    return normOrig !== normRem;
+  // Update Code in editor and sessionStorage
+  const updateCode = (newCode) => {
+    setCurrentCode(newCode);
+    try {
+      sessionStorage.setItem('cr_raw_code', newCode);
+      sessionStorage.setItem('cr_input_mode', 'code');
+    } catch (e) {}
   };
+
+  // LCS (Longest Common Subsequence) based Diff Engine
+  // Prevents offset-shifting from coloring the entire file
+  const computePreciseDiff = (origLines, remLines) => {
+    const norm = (s) => (s || '').replace(/\s+/g, '').replace(/[;]/g, '');
+
+    const n = origLines.length;
+    const m = remLines.length;
+    const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < m; j++) {
+        if (norm(origLines[i]) === norm(remLines[j]) && norm(origLines[i]).length > 0) {
+          dp[i + 1][j + 1] = dp[i][j] + 1;
+        } else {
+          dp[i + 1][j + 1] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+      }
+    }
+
+    // Backtrack LCS matches
+    const matchedOrig = new Set();
+    const matchedRem = new Set();
+    let i = n, j = m;
+    while (i > 0 && j > 0) {
+      if (norm(origLines[i - 1]) === norm(remLines[j - 1]) && norm(origLines[i - 1]).length > 0) {
+        matchedOrig.add(i - 1);
+        matchedRem.add(j - 1);
+        i--;
+        j--;
+      } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+        i--;
+      } else {
+        j--;
+      }
+    }
+
+    // Classify Original Lines
+    const leftRows = origLines.map((line, idx) => {
+      const isBlank = !line.trim();
+      const isCommon = isBlank || matchedOrig.has(idx);
+      return {
+        lineNum: idx + 1,
+        text: line,
+        status: isCommon ? 'normal' : 'error' // 🔴 Red for mistakes only
+      };
+    });
+
+    // Classify Remediated Lines
+    const rightRows = remLines.map((line, idx) => {
+      const isBlank = !line.trim();
+      const isCommon = isBlank || matchedRem.has(idx);
+      let status = 'normal';
+
+      if (!isCommon) {
+        // If line is an import / header or totally new guard clause -> 'extra' (🔵 Blue)
+        if (line.includes('#include') || line.includes('import ') || line.includes('INT_MAX') || line.includes('limits')) {
+          status = 'extra'; // 🔵 Cyan/Indigo for extra helper lines
+        } else {
+          status = 'fixed'; // 🟢 Green for corrected lines
+        }
+      }
+
+      return {
+        lineNum: idx + 1,
+        text: line,
+        status
+      };
+    });
+
+    return { leftRows, rightRows };
+  };
+
+  const { leftRows: originalDiffRows, rightRows: remediatedDiffRows } = computePreciseDiff(originalLines, remediatedLines);
 
   // Smart Exact Line Matcher
   const findExactLineNumberInCode = (item, targetCode) => {
@@ -209,7 +285,7 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
     const targetScrollTop = Math.max(0, (lineNum - 5) * lineHeight);
     editorTextareaRef.current.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
     if (gutterRef.current) {
-      gutterRef.current.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+      gutterRef.current.scrollTop = targetScrollTop;
     }
   };
 
@@ -222,7 +298,83 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
     }
   };
 
-  // 1-Click: APPLY ALL FIXES AT ONCE (Uses Backend Verified Remediated Code)
+  // 🔴 Red: Revert that specific line to the user's original submission
+  const handleToggleMistakeLine = (item, idx) => {
+    const lineNum = findExactLineNumberInCode(item, currentCode);
+    if (!lineNum) return;
+
+    const origLines = (code_snippet || '').split('\n');
+    const origLine = origLines[lineNum - 1];
+
+    if (origLine !== undefined) {
+      const lines = currentCode.split('\n');
+      lines[lineNum - 1] = origLine;
+      const updated = lines.join('\n');
+      updateCode(updated);
+      setFindingLineState(prev => ({ ...prev, [idx]: 'original' }));
+    }
+
+    setHighlightedLine(lineNum);
+    focusLineInEditor(lineNum);
+  };
+
+  // 🟢 Green: Apply fixed code cleanly (Never inserting conversational English sentences!)
+  const handleToggleFixedLine = (item, idx) => {
+    const lineNum = findExactLineNumberInCode(item, currentCode);
+    const suggestion = item.suggestion || '';
+    if (!lineNum) return;
+
+    let replacement = '';
+
+    // 1. Try to extract explicit code enclosed in backticks `...` or quotes '...'
+    const codeMatch = suggestion.match(/`([^`]+)`|'([^']+)'/);
+    if (codeMatch) {
+      const candidate = (codeMatch[1] || codeMatch[2] || '').trim();
+      // Ensure candidate is real code, not a plain english word
+      if (candidate && !['const', 'auto', 'int', 'true', 'false'].includes(candidate) && candidate.length > 2) {
+        replacement = candidate;
+      }
+    }
+
+    // 2. If suggestion is "return x == y;" or similar explicit return statement
+    if (!replacement) {
+      const returnMatch = suggestion.match(/(return\s+[^;.]+;?)/i);
+      if (returnMatch) {
+        replacement = returnMatch[1].endsWith(';') ? returnMatch[1] : returnMatch[1] + ';';
+      }
+    }
+
+    // 3. If suggestion mentions pass by value: remove '&' from reference signature
+    if (!replacement && (suggestion.toLowerCase().includes('value') || suggestion.toLowerCase().includes('reference'))) {
+      const origText = getLineText(lineNum, currentCode);
+      if (origText.includes('&')) {
+        replacement = origText.replace('&', '').trim();
+      }
+    }
+
+    // 4. Guard against writing plain English sentences into code
+    const isEnglishSentence = replacement.split(' ').length > 6 && !replacement.includes('(') && !replacement.includes(';');
+    if (isEnglishSentence || !replacement) {
+      // Just focus and select the line in editor
+      setHighlightedLine(lineNum);
+      focusLineInEditor(lineNum);
+      return;
+    }
+
+    const lines = currentCode.split('\n');
+    if (lineNum - 1 < lines.length) {
+      const origIndent = (lines[lineNum - 1].match(/^\s*/) || [''])[0];
+      lines[lineNum - 1] = origIndent + replacement;
+      const updated = lines.join('\n');
+      updateCode(updated);
+      setFindingLineState(prev => ({ ...prev, [idx]: 'fixed' }));
+    }
+
+    setHighlightedLine(lineNum);
+    focusLineInEditor(lineNum);
+  };
+
+  // 1-Click: APPLY ALL FIXES AT ONCE
   const handleApplyAllFixes = () => {
     const updated = fullyRemediatedCode;
     const newStates = {};
@@ -230,13 +382,9 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
       newStates[idx] = 'fixed';
     });
 
-    setCurrentCode(updated);
+    updateCode(updated);
     setFindingLineState(newStates);
     setAllFixesApplied(true);
-    try {
-      sessionStorage.setItem('cr_raw_code', updated);
-      sessionStorage.setItem('cr_input_mode', 'code');
-    } catch (e) {}
   };
 
   // In-Place Re-Audit Action
@@ -250,8 +398,7 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
         raw_code: currentCode,
         language: language || 'auto',
         user_email: sessionStorage.getItem('cr_user_email') || 'guest@codereview.pro',
-        problem_context: sessionStorage.getItem('cr_problem_context') || undefined,
-        constraints: sessionStorage.getItem('cr_constraints') || undefined
+        problem_context: sessionStorage.getItem('cr_problem_description') || sessionStorage.getItem('cr_problem_context') || undefined
       };
 
       const res = await fetch('/review', {
@@ -275,22 +422,18 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
     }
   };
 
-  const handleCopyPatch = (idx, text) => {
-    navigator.clipboard.writeText(text);
-    setCopiedPatchIdx(idx);
-    setTimeout(() => setCopiedPatchIdx(null), 2000);
+  const handleCopyCode = (withComments = true) => {
+    const textToCopy = withComments ? currentCode : stripComments(currentCode);
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedCodeMode(withComments ? 'comments' : 'clean');
+    setTimeout(() => setCopiedCodeMode(null), 2000);
   };
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(currentCode);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
-
-  const handleCopyRemediated = () => {
-    navigator.clipboard.writeText(fullyRemediatedCode);
-    setCopiedRemediated(true);
-    setTimeout(() => setCopiedRemediated(false), 2000);
+  const handleCopyRemediated = (withComments = true) => {
+    const textToCopy = withComments ? fullyRemediatedCode : stripComments(fullyRemediatedCode);
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedRemediatedMode(withComments ? 'comments' : 'clean');
+    setTimeout(() => setCopiedRemediatedMode(null), 2000);
   };
 
   const handleCopyPrComment = () => {
@@ -325,7 +468,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
   const editorHeightClass = isExpandedHeight ? 'max-h-[850px] min-h-[700px]' : 'max-h-[560px] min-h-[460px]';
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn font-sans">
+    <div className="w-full space-y-5 animate-fadeIn font-sans">
       {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-3 border-b border-[var(--border-subtle)]">
         <button
@@ -348,7 +491,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600/10 text-blue-600 border border-blue-600/20 text-xs font-bold hover:bg-blue-600/20 transition-colors cursor-pointer"
           >
             {copiedPr ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copiedPr ? 'PR Comment Copied!' : 'Copy GitHub PR Comment'}</span>
+            <span>{copiedPr ? 'PR Comment Copied!' : 'Copy PR Summary'}</span>
           </button>
 
           <button
@@ -385,7 +528,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                 Grade {health_score.grade}
               </span>
             </div>
-            <p className="text-[10px] text-[var(--text-muted)] mt-1 font-mono">Weighted 4-Agent Score</p>
+            <p className="text-[10px] text-[var(--text-muted)] mt-1 font-mono">Multi-Agent Health Score</p>
           </div>
 
           <HealthRadar healthScore={health_score} />
@@ -408,7 +551,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
               <Bug className="w-3.5 h-3.5 text-amber-500" />
             </div>
             <div className="text-xl font-bold text-[var(--text-primary)] font-mono">{bugs.length} Issues</div>
-            <p className="text-[10px] text-[var(--text-muted)]">Logic & unhandled cases</p>
+            <p className="text-[10px] text-[var(--text-muted)]">Logic & boundary cases</p>
           </div>
 
           <div className="theme-panel p-4 rounded-2xl space-y-1 shadow-sm border border-[var(--border-subtle)]">
@@ -426,14 +569,14 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
       <div className="theme-panel rounded-2xl p-5 border border-blue-500/20 space-y-3 shadow-sm">
         <div className="flex items-center gap-2 text-xs font-bold text-blue-600 border-b border-[var(--border-subtle)] pb-2">
           <Sparkles className="w-4 h-4 text-amber-500" />
-          <span>Staff Engineer PR Review Executive Summary</span>
+          <span>Staff PR Review Summary</span>
         </div>
         <div className="text-xs text-[var(--text-primary)] leading-relaxed whitespace-pre-line space-y-2">
           {summary || 'Review completed successfully.'}
         </div>
       </div>
 
-      {/* Clean 2-Way Layout Switcher Bar + Smooth +/- 1% Width Slider */}
+      {/* Clean Layout Switcher Bar + Width Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-2.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
         <div className="flex items-center gap-1.5 p-1 bg-[var(--bg-surface)] rounded-xl border border-[var(--border-subtle)]">
           <button
@@ -457,146 +600,156 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
           </button>
         </div>
 
-        {/* Smooth +/- 1% Width Controls & Actions */}
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
-          {layoutMode === 'split' && (
-            <div className="flex items-center gap-1.5 bg-[var(--bg-surface)] px-2.5 py-1.5 rounded-xl border border-[var(--border-subtle)] text-xs">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" />
-              <span className="text-[11px] font-mono text-[var(--text-muted)]">Width:</span>
-              
-              <button
-                onClick={() => setInspectorWidthPercent(prev => Math.max(20, prev - 1))}
-                className="p-1 rounded-md hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title="Decrease Width (-1%)"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
+        {/* Smooth +/- 1% Width Controls */}
+        {layoutMode === 'split' && (
+          <div className="flex items-center gap-1.5 bg-[var(--bg-surface)] px-2.5 py-1.5 rounded-xl border border-[var(--border-subtle)] text-xs">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" />
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">Width:</span>
+            
+            <button
+              onClick={() => setInspectorWidthPercent(prev => Math.max(20, prev - 1))}
+              className="p-1 rounded-md hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              title="Decrease Width (-1%)"
+            >
+              <Minus className="w-3 h-3" />
+            </button>
 
-              <input
-                type="range"
-                min="20"
-                max="80"
-                step="1"
-                value={inspectorWidthPercent}
-                onChange={(e) => setInspectorWidthPercent(Number(e.target.value))}
-                className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                title={`Inspector Width: ${inspectorWidthPercent}%`}
-              />
+            <input
+              type="range"
+              min="20"
+              max="80"
+              step="1"
+              value={inspectorWidthPercent}
+              onChange={(e) => setInspectorWidthPercent(Number(e.target.value))}
+              className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              title={`Inspector Width: ${inspectorWidthPercent}%`}
+            />
 
-              <button
-                onClick={() => setInspectorWidthPercent(prev => Math.min(80, prev + 1))}
-                className="p-1 rounded-md hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                title="Increase Width (+1%)"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
+            <button
+              onClick={() => setInspectorWidthPercent(prev => Math.min(80, prev + 1))}
+              className="p-1 rounded-md hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              title="Increase Width (+1%)"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
 
-              <span className="text-[11px] font-mono font-bold text-[var(--text-primary)] w-9 text-right">
-                {inspectorWidthPercent}%
-              </span>
+            <span className="text-[11px] font-mono font-bold text-[var(--text-primary)] w-9 text-right">
+              {inspectorWidthPercent}%
+            </span>
 
-              <button
-                onClick={() => setIsExpandedHeight(!isExpandedHeight)}
-                className={`p-1 ml-1 rounded-md transition-all cursor-pointer ${
-                  isExpandedHeight ? 'bg-blue-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
-                title={isExpandedHeight ? "Compact Height" : "Expand Full Height"}
-              >
-                {isExpandedHeight ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
-              </button>
-            </div>
-          )}
-
-          {/* 1-Click Apply All Fixes Button */}
-          <button
-            onClick={handleApplyAllFixes}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer ${
-              allFixesApplied 
-                ? 'bg-emerald-600 text-white shadow-emerald-500/20' 
-                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-            }`}
-            title="Apply all suggested code fixes in one single click"
-          >
-            {allFixesApplied ? <CheckCheck className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
-            <span>{allFixesApplied ? 'All Fixes Applied!' : `Apply All Fixes (${allFindings.length}) ✨`}</span>
-          </button>
-
-          <button
-            onClick={handleInPlaceReAudit}
-            disabled={isReAuditing}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
-          >
-            {isReAuditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-            <span>{isReAuditing ? 'Re-Auditing in place...' : 'Re-Audit ⚡'}</span>
-          </button>
-        </div>
+            <button
+              onClick={() => setIsExpandedHeight(!isExpandedHeight)}
+              className={`p-1 ml-1 rounded-md transition-all cursor-pointer ${
+                isExpandedHeight ? 'bg-blue-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+              title={isExpandedHeight ? "Compact Height" : "Expand Full Height"}
+            >
+              {isExpandedHeight ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* VIEW 1: PRECISE DIFF (IGNORES WHITESPACE/SPACES SO IF(N==0) IS NOT COLORED) */}
+      {/* VIEW 1: PRECISE LCS DIFF COMPARISON */}
       {layoutMode === 'diff' ? (
         <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-editor)] overflow-hidden shadow-sm animate-fadeIn">
+          {/* Legend Bar */}
+          <div className="p-2.5 px-4 bg-[var(--bg-surface)] border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono">
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5 text-rose-400">
+                <span className="w-2.5 h-2.5 rounded bg-rose-500/30 border border-rose-500"></span>
+                🔴 Error / Flawed Line
+              </span>
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <span className="w-2.5 h-2.5 rounded bg-emerald-500/30 border border-emerald-500"></span>
+                🟢 Corrected Line
+              </span>
+              <span className="flex items-center gap-1.5 text-indigo-400">
+                <span className="w-2.5 h-2.5 rounded bg-indigo-500/30 border border-indigo-500"></span>
+                🔵 Extra Logic Line Added
+              </span>
+              <span className="text-[var(--text-muted)]">
+                Uncolored = Identical / Clean
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[var(--border-subtle)]">
-            {/* Column 1: Your Original Code */}
+            {/* Column 1: Your Submission */}
             <div className="flex flex-col">
               <div className="p-3.5 px-4 bg-rose-500/10 border-b border-[var(--border-subtle)] flex items-center justify-between">
                 <span className="text-xs font-bold text-rose-500 uppercase tracking-wider flex items-center gap-1.5">
                   <ShieldAlert className="w-4 h-4" />
-                  Original Source (Your Submitted Code)
+                  Your Submission
                 </span>
                 <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                  {originalLines.length} lines
+                  {originalDiffRows.length} lines
                 </span>
               </div>
-              <div className="p-4 font-mono text-xs overflow-x-auto max-h-[620px] overflow-y-auto space-y-1 bg-[var(--bg-card)]">
-                {originalLines.map((line, i) => {
-                  const remLine = remediatedLines[i] || '';
-                  const modified = isLineModified(line, remLine);
+              <div className="p-4 font-mono text-xs overflow-x-auto max-h-[640px] overflow-y-auto space-y-1 bg-[var(--bg-card)]">
+                {originalDiffRows.map((row, i) => {
+                  const isError = row.status === 'error';
                   return (
                     <div 
                       key={i} 
                       className={`leading-5 whitespace-pre flex transition-colors py-0.5 ${
-                        modified ? 'bg-rose-500/20 text-rose-300 font-semibold border-l-2 border-rose-500 pl-1.5 -ml-1 rounded' : 'text-[var(--text-secondary)]'
+                        isError ? 'bg-rose-500/20 text-rose-300 font-semibold border-l-2 border-rose-500 pl-1.5 -ml-1 rounded' : 'text-[var(--text-secondary)]'
                       }`}
                     >
-                      <span className="w-8 text-[var(--text-muted)] select-none shrink-0 text-right pr-3 font-mono text-[11px]">{i + 1}</span>
-                      <span className="flex-1">{line || ' '}</span>
+                      <span className="w-8 text-[var(--text-muted)] select-none shrink-0 text-right pr-3 font-mono text-[11px]">{row.lineNum}</span>
+                      <span className="flex-1 whitespace-pre">{row.text || ' '}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* Column 2: Fully Remediated Code (100% Compilable & Clean) */}
+            {/* Column 2: Accepted Solution */}
             <div className="flex flex-col">
-              <div className="p-3.5 px-4 bg-emerald-500/10 border-b border-[var(--border-subtle)] flex items-center justify-between">
+              <div className="p-3 px-4 bg-emerald-500/10 border-b border-[var(--border-subtle)] flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4" />
-                  Remediated Source (100% Compilable & Optimized)
+                  Accepted Solution
                 </span>
                 
-                <button
-                  onClick={handleCopyRemediated}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition-all shadow-sm cursor-pointer"
-                  title="Copy 100% compilable code for LeetCode / GFG"
-                >
-                  {copiedRemediated ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedRemediated ? 'Copied Full Code!' : 'Copy Remediated Code'}</span>
-                </button>
+                {/* 2 LeetCode-style Copy Options */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleCopyRemediated(false)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition-all shadow-sm cursor-pointer"
+                    title="Copy code without comments"
+                  >
+                    {copiedRemediatedMode === 'clean' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedRemediatedMode === 'clean' ? 'Copied Clean Code!' : 'Copy Code'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleCopyRemediated(true)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] text-[11px] font-semibold transition-all cursor-pointer"
+                    title="Copy code including all comments"
+                  >
+                    {copiedRemediatedMode === 'comments' ? <Check className="w-3 h-3 text-emerald-500" /> : <MessageSquareQuote className="w-3 h-3" />}
+                    <span>{copiedRemediatedMode === 'comments' ? 'Copied with Comments!' : 'Copy with Comments'}</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="p-4 font-mono text-xs overflow-x-auto max-h-[620px] overflow-y-auto space-y-1 bg-[var(--bg-card)]">
-                {remediatedLines.map((line, i) => {
-                  const origLine = originalLines[i] || '';
-                  const modified = isLineModified(origLine, line);
+              <div className="p-4 font-mono text-xs overflow-x-auto max-h-[640px] overflow-y-auto space-y-1 bg-[var(--bg-card)]">
+                {remediatedDiffRows.map((row, i) => {
+                  let rowStyle = 'text-[var(--text-primary)]';
+                  if (row.status === 'fixed') {
+                    rowStyle = 'bg-emerald-500/20 text-emerald-300 font-semibold border-l-2 border-emerald-500 pl-1.5 -ml-1 rounded';
+                  } else if (row.status === 'extra') {
+                    rowStyle = 'bg-indigo-500/20 text-indigo-300 font-semibold border-l-2 border-indigo-500 pl-1.5 -ml-1 rounded';
+                  }
+
                   return (
                     <div 
                       key={i} 
-                      className={`leading-5 whitespace-pre flex transition-colors py-0.5 ${
-                        modified ? 'bg-emerald-500/20 text-emerald-300 font-semibold border-l-2 border-emerald-500 pl-1.5 -ml-1 rounded' : 'text-[var(--text-primary)]'
-                      }`}
+                      className={`leading-5 whitespace-pre flex transition-colors py-0.5 ${rowStyle}`}
                     >
-                      <span className="w-8 text-[var(--text-muted)] select-none shrink-0 text-right pr-3 font-mono text-[11px]">{i + 1}</span>
-                      <span className="flex-1 font-medium">{line || ' '}</span>
+                      <span className="w-8 text-[var(--text-muted)] select-none shrink-0 text-right pr-3 font-mono text-[11px]">{row.lineNum}</span>
+                      <span className="flex-1 font-medium whitespace-pre">{row.text || ' '}</span>
                     </div>
                   );
                 })}
@@ -605,38 +758,45 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
           </div>
         </div>
       ) : (
-        /* VIEW 2: SIDE-BY-SIDE REVIEW WITH SYNCHRONIZED SCROLL & ACCURATE SELECTION */
-        <div className="flex flex-col lg:flex-row gap-6 items-start transition-all duration-300">
+        /* VIEW 2: SIDE-BY-SIDE REVIEW */
+        <div className="flex flex-col lg:flex-row gap-5 items-start transition-all duration-300">
           {/* Left: Source Code Inspector */}
           <div 
             style={{ width: `${inspectorWidthPercent}%` }} 
             className="w-full space-y-3 transition-all duration-150"
           >
             <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-[var(--text-primary)] uppercase text-[11px] flex items-center gap-1.5">
-                  <FileCode className="w-3.5 h-3.5 text-blue-600" />
-                  Source Code Inspector
-                </span>
-                <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 text-[10px] font-mono font-bold">
-                  Directly Editable
-                </span>
-              </div>
+              <span className="font-bold text-[var(--text-primary)] uppercase text-[11px] flex items-center gap-1.5">
+                <FileCode className="w-3.5 h-3.5 text-blue-600" />
+                Source Code Inspector
+              </span>
 
-              <button
-                onClick={handleCopyCode}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[10px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
-                title="Copy current code"
-              >
-                {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedCode ? 'Copied' : 'Copy'}</span>
-              </button>
+              {/* 2 Copy Options: Copy Code vs Copy with Comments */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handleCopyCode(false)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[10px] font-bold text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
+                  title="Copy clean code without comments"
+                >
+                  {copiedCodeMode === 'clean' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedCodeMode === 'clean' ? 'Copied!' : 'Copy Code'}</span>
+                </button>
+
+                <button
+                  onClick={() => handleCopyCode(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[10px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors cursor-pointer"
+                  title="Copy code with comments"
+                >
+                  {copiedCodeMode === 'comments' ? <Check className="w-3 h-3 text-emerald-500" /> : <MessageSquareQuote className="w-3 h-3" />}
+                  <span>{copiedCodeMode === 'comments' ? 'Copied!' : 'With Comments'}</span>
+                </button>
+              </div>
             </div>
 
-            {/* Locked-Scroll Code Box */}
+            {/* Code Box with Horizontal Scroll and Synchronized Gutter */}
             <div className={`rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-editor)] overflow-hidden flex flex-col shadow-inner ${editorHeightClass} transition-all duration-300`}>
               <div className="flex font-mono text-xs flex-1 overflow-hidden">
-                {/* Synchronized Line Gutter */}
+                {/* Line Gutter */}
                 <div 
                   ref={gutterRef}
                   className="code-line-gutter py-3.5 select-none border-r border-[var(--border-subtle)] shrink-0 text-[10px] text-[var(--text-muted)] overflow-y-hidden"
@@ -661,31 +821,28 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                   })}
                 </div>
 
-                {/* Editable Textarea with Scroll Sync to Gutter */}
+                {/* Textarea with Whitespace Pre (Single-line comments without wrapping) */}
                 <textarea
                   ref={editorTextareaRef}
                   value={currentCode}
+                  wrap="off"
                   onScroll={(e) => {
                     if (gutterRef.current) {
                       gutterRef.current.scrollTop = e.target.scrollTop;
                     }
                   }}
                   onChange={(e) => {
-                    setCurrentCode(e.target.value);
-                    try {
-                      sessionStorage.setItem('cr_raw_code', e.target.value);
-                      sessionStorage.setItem('cr_input_mode', 'code');
-                    } catch (err) {}
+                    updateCode(e.target.value);
                   }}
-                  className="flex-1 p-3.5 bg-transparent text-[var(--text-primary)] font-mono text-xs leading-5 focus:outline-none resize-none overflow-y-auto selection:bg-blue-500/30 selection:text-white"
-                  placeholder="// Edit source code directly here..."
+                  className="flex-1 p-3.5 bg-transparent text-[var(--text-primary)] font-mono text-xs leading-5 focus:outline-none resize-none overflow-x-auto overflow-y-auto whitespace-pre selection:bg-blue-500/30 selection:text-white"
+                  placeholder="// Source code here..."
                 />
               </div>
 
               {/* Status bar */}
               <div className="p-2.5 px-4 bg-[var(--bg-surface)] border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] text-[var(--text-muted)] font-mono">
-                <span>{codeLines.length} lines • {language.toUpperCase()}</span>
-                <span className="text-blue-600 font-bold">Scroll & Line Synced</span>
+                <span>{codeLines.length} lines</span>
+                <span className="text-blue-600 font-bold uppercase">{language}</span>
               </div>
             </div>
           </div>
@@ -765,6 +922,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                   const isSelected = selectedFindingIdx === idx;
                   const lineNum = findExactLineNumberInCode(item, currentCode);
                   const originalLineText = getLineText(lineNum, code_snippet) || getLineText(lineNum, currentCode);
+                  const isLineFixed = findingLineState[idx] === 'fixed';
 
                   return (
                     <div 
@@ -803,14 +961,20 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
 
                       <p className="text-xs text-[var(--text-primary)] font-medium leading-relaxed">{item.issue}</p>
 
-                      {/* Informative Issue & Suggestion Card */}
+                      {/* Interactive Mistake (Red) vs Suggested Fix (Green) Blocks */}
                       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-editor)] text-xs font-mono overflow-hidden space-y-0">
+                        {/* 🔴 RED: Click to view/restore user's original mistake line */}
                         {originalLineText && (
                           <div 
-                            className="p-2.5 px-3 border-b border-[var(--border-subtle)] bg-rose-500/10"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleMistakeLine(item, idx);
+                            }}
+                            className="p-2.5 px-3 border-b border-[var(--border-subtle)] bg-rose-500/10 hover:bg-rose-500/20 transition-colors cursor-pointer"
+                            title="Click to view & select your original line in editor"
                           >
                             <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block mb-1">
-                              🔴 Mistake / Detected Line (Line {lineNum})
+                              🔴 Mistake / Detected Line (Line {lineNum}) • Click to Focus
                             </span>
                             <div className="text-[11px] text-rose-400 font-mono whitespace-pre truncate">
                               {originalLineText}
@@ -818,25 +982,26 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                           </div>
                         )}
 
+                        {/* 🟢 GREEN: Click to apply/update line directly in the editor */}
                         {item.suggestion && (
-                          <div className="p-2.5 px-3 bg-emerald-500/10">
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleFixedLine(item, idx);
+                            }}
+                            className="p-2.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                            title="Click to apply clean fix into your code editor"
+                          >
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1">
                                 <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                                <span>🟢 Optimization Recommendation</span>
+                                <span>🟢 Optimization Recommendation • Click to Apply Fix</span>
                               </span>
-                              
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCopyPatch(idx, item.suggestion);
-                                }}
-                                className="text-blue-500 hover:text-blue-400 flex items-center gap-1 cursor-pointer text-[10px] font-bold"
-                              >
-                                {copiedPatchIdx === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                                <span>{copiedPatchIdx === idx ? 'Copied' : 'Copy Suggestion'}</span>
-                              </button>
+                              {isLineFixed && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400">
+                                  Fixed ✓
+                                </span>
+                              )}
                             </div>
 
                             <div className="text-[11px] text-emerald-400 whitespace-pre-wrap leading-relaxed font-mono">
@@ -854,36 +1019,28 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
         </div>
       )}
 
-      {/* Bottom Bar: 1-Click Apply All Fixes & Re-Audit */}
-      <div className="p-4 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
-        <div>
-          <h4 className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-500" />
-            Ready to Verify Your Fixes?
-          </h4>
-          <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-            Click Apply All Fixes to replace your code with the 100% verified compilable solution, then Re-Audit!
-          </p>
-        </div>
+      {/* Bottom Bar: Clean LeetCode-style Action Buttons */}
+      <div className="p-4 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex flex-wrap items-center justify-end gap-3 shadow-md">
+        <button
+          onClick={handleApplyAllFixes}
+          className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer ${
+            allFixesApplied 
+              ? 'bg-emerald-600 text-white shadow-emerald-500/20' 
+              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+          }`}
+        >
+          {allFixesApplied ? <CheckCheck className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+          <span>{allFixesApplied ? 'All Fixes Applied!' : `Apply Fixes (${allFindings.length}) ✨`}</span>
+        </button>
 
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-          <button
-            onClick={handleApplyAllFixes}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Apply 100% Compilable Fixes ✨</span>
-          </button>
-
-          <button
-            onClick={handleInPlaceReAudit}
-            disabled={isReAuditing}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50"
-          >
-            {isReAuditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            <span>{isReAuditing ? 'Re-Auditing in place...' : 'Re-Audit Code ⚡'}</span>
-          </button>
-        </div>
+        <button
+          onClick={handleInPlaceReAudit}
+          disabled={isReAuditing}
+          className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50"
+        >
+          {isReAuditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+          <span>{isReAuditing ? 'Running Analysis...' : 'Run Review ⚡'}</span>
+        </button>
       </div>
     </div>
   );

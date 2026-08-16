@@ -3,9 +3,8 @@ from agents.base_agent import call_llm, parse_json_safely
 PERFORMANCE_SYSTEM_PROMPT = """You are a Senior Performance & Systems Reliability Engineer.
 Analyze the submitted code snippet for:
 - Algorithmic inefficiency (e.g. O(n^2) nested loops, redundant iterations)
-- Memory leaks, unclosed file/connection handles, excessive memory allocations
-- Inefficient database query patterns (N+1 queries, unindexed filters, select *)
-- Blocking operations on async/main threads
+- Memory leaks, excessive object allocations
+- Inefficient pass-by-value / copying large containers
 - Uncached expensive computations or duplicate computations
 
 IMPORTANT: The code is provided with line numbers (e.g. 1 | code...). Use the EXACT line number shown in the left column for the "line" field.
@@ -25,10 +24,11 @@ The JSON object MUST follow this exact schema:
 If no performance issues are found, return {"performance": []}.
 """
 
-async def analyze_performance(code: str, language: str = "auto") -> dict:
+async def analyze_performance(code: str, language: str = "auto", problem_context: str = None) -> dict:
     fallback = {"performance": []}
     numbered_lines = "\n".join([f"{i+1} | {line}" for i, line in enumerate(code.splitlines())])
-    user_prompt = f"Language: {language}\n\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
+    ctx_section = f"\nDSA Problem Context & Constraints:\n{problem_context}\n" if problem_context else ""
+    user_prompt = f"Language: {language}\n{ctx_section}\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
 
     try:
         raw_response = await call_llm(PERFORMANCE_SYSTEM_PROMPT, user_prompt, max_tokens=2500)

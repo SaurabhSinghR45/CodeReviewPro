@@ -3,10 +3,9 @@ from agents.base_agent import call_llm, parse_json_safely
 BUG_SYSTEM_PROMPT = """You are a Principal Software Engineer specialized in Bug Detection and Code Quality.
 Analyze the submitted code snippet for:
 - Logic errors, incorrect conditions, calculation mistakes
-- Unhandled edge cases, unexpected input types, boundary conditions
+- Unhandled edge cases, unexpected input types, boundary conditions (e.g. negative numbers, 0, overflow)
 - Potential runtime exceptions (NPE/AttributeError, TypeError, IndexOutOfBounds)
 - Off-by-one errors, infinite loops, resource leaks
-- Null / None / Undefined handling mistakes
 
 IMPORTANT: The code is provided with line numbers (e.g. 1 | code...). Use the EXACT line number shown in the left column for the "line" field.
 
@@ -24,10 +23,11 @@ The JSON object MUST follow this exact schema:
 If no bug issues are found, return {"bugs": []}.
 """
 
-async def analyze_bugs(code: str, language: str = "auto") -> dict:
+async def analyze_bugs(code: str, language: str = "auto", problem_context: str = None) -> dict:
     fallback = {"bugs": []}
     numbered_lines = "\n".join([f"{i+1} | {line}" for i, line in enumerate(code.splitlines())])
-    user_prompt = f"Language: {language}\n\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
+    ctx_section = f"\nDSA Problem Context & Constraints:\n{problem_context}\n" if problem_context else ""
+    user_prompt = f"Language: {language}\n{ctx_section}\nNumbered code to review (Use exact line numbers on the left):\n```\n{numbered_lines}\n```"
 
     try:
         raw_response = await call_llm(BUG_SYSTEM_PROMPT, user_prompt, max_tokens=2500)
