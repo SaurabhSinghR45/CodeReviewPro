@@ -245,16 +245,6 @@ export default function LandingPage({ onLaunchApp, onOpenSample, onOpenLogin, on
             </div>
           </div>
         </div>
-
-        <div className="text-center pt-10">
-          <button
-            onClick={onLaunchApp}
-            className="px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all inline-flex items-center gap-2"
-          >
-            <span>Launch CodeReviewPro Studio</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
       </section>
 
       {/* Minimalist Footer */}

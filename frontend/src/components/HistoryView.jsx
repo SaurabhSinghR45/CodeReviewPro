@@ -1,5 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { History, Search, Calendar, ArrowRight, Loader2, AlertCircle, FileCode, RefreshCw, Activity, Award } from 'lucide-react';
+import { 
+  History, 
+  Search, 
+  Calendar, 
+  ArrowRight, 
+  Loader2, 
+  AlertCircle, 
+  FileCode, 
+  RefreshCw, 
+  Activity, 
+  Award,
+  FolderGit2,
+  Play,
+  X 
+} from 'lucide-react';
 
 const GithubIcon = ({ className = "w-4 h-4" }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24">
@@ -7,26 +21,31 @@ const GithubIcon = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
+export default function HistoryView({ 
+  onSelectReview, 
+  user, 
+  onOpenAuth,
+  selectedProject = null,
+  onClearProjectFilter,
+  onRunAudit
+}) {
   const isGuest = !user || user.name === 'Guest Developer' || !user.isVerified;
   const [reviews, setReviews] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(!isGuest);
+  const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [selectedLoadingId, setSelectedLoadingId] = useState(null);
 
   const fetchHistory = async () => {
-    if (isGuest) {
-      setReviews([]);
-      setIsLoading(false);
-      return;
-    }
-
     setIsLoading(true);
     setErrorMsg('');
     try {
-      const userEmail = user?.email || '';
-      const res = await fetch(`/reviews?user_email=${encodeURIComponent(userEmail)}`);
+      const userEmail = (!isGuest && user?.email) ? user.email : 'guest@codereview.pro';
+      const queryParams = new URLSearchParams();
+      if (userEmail) queryParams.append('user_email', userEmail);
+      if (selectedProject?.name) queryParams.append('project', selectedProject.name);
+
+      const res = await fetch(`/reviews?${queryParams.toString()}`);
       if (!res.ok) throw new Error('Failed to load review history');
       const data = await res.json();
       setReviews(Array.isArray(data) ? data : []);
@@ -39,7 +58,7 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
 
   useEffect(() => {
     fetchHistory();
-  }, [user?.email, isGuest]);
+  }, [user?.email, isGuest, selectedProject]);
 
   const handleSelect = async (id) => {
     setSelectedLoadingId(id);
@@ -56,6 +75,16 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
   };
 
   const filteredReviews = reviews.filter((r) => {
+    if (selectedProject) {
+      const pName = selectedProject.name.toLowerCase();
+      const pUrl = (selectedProject.url || '').toLowerCase();
+      const matchesProject = 
+        (r.source_url && (r.source_url.toLowerCase().includes(pName) || r.source_url.toLowerCase().includes(pUrl))) ||
+        (r.summary && r.summary.toLowerCase().includes(pName));
+      if (!matchesProject) return false;
+    }
+
+    if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
       (r.source_url && r.source_url.toLowerCase().includes(query)) ||
@@ -65,8 +94,8 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
     );
   });
 
-  const avgHealthScore = reviews.length > 0
-    ? Math.round(reviews.reduce((acc, curr) => acc + (curr.health_score || 100), 0) / reviews.length)
+  const avgHealthScore = filteredReviews.length > 0
+    ? Math.round(filteredReviews.reduce((acc, curr) => acc + (curr.health_score || 100), 0) / filteredReviews.length)
     : 100;
 
   const formatDate = (isoString) => {
@@ -88,32 +117,85 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
         <div>
           <h2 className="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-500" />
-            SaaS Review History & Audit Log
+            {selectedProject ? `${selectedProject.name} Audit History` : 'SaaS Review History & Audit Log'}
           </h2>
           <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-            Browse and inspect all past code reviews, security audits, and health score ratings.
+            {selectedProject 
+              ? `Historical security scans and architectural audits for repository ${selectedProject.url}`
+              : 'Browse and inspect all past code reviews, security audits, and health score ratings.'
+            }
           </p>
         </div>
 
         <button
           onClick={fetchHistory}
           disabled={isLoading}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl theme-panel text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl theme-panel text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
+      {/* Active Project Filter Banner */}
+      {selectedProject && (
+        <div className="p-3.5 px-4 rounded-2xl bg-blue-500/10 border border-blue-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fadeIn">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-blue-600/20 text-blue-500 flex items-center justify-center shrink-0">
+              <FolderGit2 className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${selectedProject.color || 'bg-blue-500'}`}></span>
+                <span className="text-xs font-bold text-[var(--text-primary)]">
+                  Project: <strong className="text-blue-600 dark:text-blue-400">{selectedProject.name}</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/20 text-blue-600 dark:text-blue-300">
+                  {filteredReviews.length} {filteredReviews.length === 1 ? 'audit recorded' : 'audits recorded'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[var(--text-muted)] font-mono truncate mt-0.5">
+                {selectedProject.url}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            {onRunAudit && (
+              <button
+                onClick={() => onRunAudit(selectedProject.url)}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                title="Run a new multi-agent review on this repository"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>Run New Audit</span>
+              </button>
+            )}
+            {onClearProjectFilter && (
+              <button
+                onClick={onClearProjectFilter}
+                className="px-3 py-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                title="Clear project filter and view all reviews"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Show All Audits</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Overview Analytics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="theme-panel p-4 rounded-2xl space-y-1">
           <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider flex items-center justify-between">
-            <span>Total Audits</span>
+            <span>{selectedProject ? `${selectedProject.name} Audits` : 'Total Audits'}</span>
             <Activity className="w-4 h-4 text-indigo-500" />
           </div>
-          <div className="text-2xl font-extrabold text-[var(--text-primary)]">{reviews.length}</div>
-          <p className="text-[10px] text-[var(--text-muted)]">Stored in database</p>
+          <div className="text-2xl font-extrabold text-[var(--text-primary)]">{filteredReviews.length}</div>
+          <p className="text-[10px] text-[var(--text-muted)]">
+            {selectedProject ? `Archived audits for ${selectedProject.name}` : 'Stored in database'}
+          </p>
         </div>
 
         <div className="theme-panel p-4 rounded-2xl space-y-1">
@@ -122,7 +204,9 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
             <Award className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-extrabold text-[var(--text-primary)]">{avgHealthScore} / 100</div>
-          <p className="text-[10px] text-[var(--text-muted)]">Across all audits</p>
+          <p className="text-[10px] text-[var(--text-muted)]">
+            {selectedProject ? `Average for ${selectedProject.name}` : 'Across all audits'}
+          </p>
         </div>
 
         <div className="theme-panel p-4 rounded-2xl space-y-1">
@@ -144,7 +228,10 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter by GitHub URL, summary keywords, language, or Review ID..."
+          placeholder={selectedProject 
+            ? `Filter within ${selectedProject.name} audits by keywords, language, ID...`
+            : "Filter by GitHub URL, summary keywords, language, or Review ID..."
+          }
           className="w-full pl-10 pr-4 py-2.5 theme-panel rounded-xl text-[var(--text-primary)] placeholder-[var(--text-muted)] text-xs focus:outline-none focus:border-indigo-500 transition-all"
         />
       </div>
@@ -164,12 +251,41 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
           <p className="text-xs text-[var(--text-secondary)] font-medium">Fetching history log from SQLite database...</p>
         </div>
       ) : filteredReviews.length === 0 ? (
-        <div className="theme-panel p-12 text-center rounded-2xl space-y-3">
-          <FileCode className="w-10 h-10 text-[var(--text-muted)] mx-auto" />
-          <h3 className="text-base font-bold text-[var(--text-primary)]">No Past Reviews Found</h3>
-          <p className="text-xs text-[var(--text-muted)] max-w-sm mx-auto">
-            {searchQuery ? 'No reviews matched your search query.' : 'Submit code on the workbench to create your first review!'}
-          </p>
+        <div className="theme-panel p-12 text-center rounded-2xl space-y-4">
+          <FolderGit2 className="w-12 h-12 text-blue-500 mx-auto opacity-75" />
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-[var(--text-primary)]">
+              {selectedProject 
+                ? `No Audit History for ${selectedProject.name}`
+                : 'No Past Reviews Found'
+              }
+            </h3>
+            <p className="text-xs text-[var(--text-muted)] max-w-md mx-auto">
+              {selectedProject
+                ? `No code audits have been recorded for ${selectedProject.url} yet. Click below to launch an autonomous review now.`
+                : (searchQuery ? 'No reviews matched your search query.' : 'Submit code on the workbench to create your first review!')
+              }
+            </p>
+          </div>
+          {selectedProject && onRunAudit && (
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => onRunAudit(selectedProject.url)}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-sm cursor-pointer flex items-center gap-2"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Launch Audit on {selectedProject.name}</span>
+              </button>
+              {onClearProjectFilter && (
+                <button
+                  onClick={onClearProjectFilter}
+                  className="px-4 py-2 rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  View All Past Reviews
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -243,3 +359,4 @@ export default function HistoryView({ onSelectReview, user, onOpenAuth }) {
     </div>
   );
 }
+

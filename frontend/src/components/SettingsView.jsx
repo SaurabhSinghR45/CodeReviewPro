@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sliders, ShieldCheck, CheckCircle2, Save, Cpu } from 'lucide-react';
+import CustomSelect from './CustomSelect';
 
 export default function SettingsView() {
   const [model, setModel] = useState('auto-fast');
@@ -51,29 +52,29 @@ export default function SettingsView() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           <div className="space-y-1.5">
             <label className="text-[var(--text-secondary)] font-semibold block">Inference Engine Mode</label>
-            <select
+            <CustomSelect
               value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full p-2.5 theme-card rounded-xl text-[var(--text-primary)] focus:outline-none focus:border-indigo-500 font-sans text-xs"
-            >
-              <option value="auto-fast">High-Speed Parallel Engine (Default)</option>
-              <option value="deep-audit">Deep Architectural Reasoning Mode</option>
-              <option value="appsec-strict">AppSec Zero-Tolerance Security Mode</option>
-            </select>
+              onChange={setModel}
+              options={[
+                { value: 'auto-fast', label: 'High-Speed Parallel Engine (Default)' },
+                { value: 'deep-audit', label: 'Deep Architectural Reasoning Mode' },
+                { value: 'appsec-strict', label: 'AppSec Zero-Tolerance Security Mode' },
+              ]}
+            />
             <p className="text-[10px] text-[var(--text-muted)] font-mono">Configured via backend/.env API keys</p>
           </div>
 
           <div className="space-y-1.5">
             <label className="text-[var(--text-secondary)] font-semibold block">Audit Sensitivity Threshold</label>
-            <select
+            <CustomSelect
               value={strictness}
-              onChange={(e) => setStrictness(e.target.value)}
-              className="w-full p-2.5 theme-card rounded-xl text-[var(--text-primary)] focus:outline-none focus:border-indigo-500 font-sans text-xs"
-            >
-              <option value="standard">Standard (Balanced Review)</option>
-              <option value="strict">Strict (Zero Tolerance, Deep Audit)</option>
-              <option value="lenient">Lenient (Focus on Critical Bugs Only)</option>
-            </select>
+              onChange={setStrictness}
+              options={[
+                { value: 'standard', label: 'Standard (Balanced Review)' },
+                { value: 'strict', label: 'Strict (Zero Tolerance, Deep Audit)' },
+                { value: 'lenient', label: 'Lenient (Focus on Critical Bugs Only)' },
+              ]}
+            />
             <p className="text-[10px] text-[var(--text-muted)] font-mono">Adjusts severity penalty weights on Health Score</p>
           </div>
         </div>

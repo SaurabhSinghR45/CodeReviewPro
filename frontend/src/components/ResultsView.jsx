@@ -24,10 +24,16 @@ import {
   Loader2,
   CheckCheck,
   MessageSquareQuote,
-  PlusCircle,
-  Wand2
+  Wand2,
+  AlertTriangle
 } from 'lucide-react';
 import HealthRadar from './HealthRadar';
+import { 
+  DEMO_REMEDIATED_CODE, 
+  DEMO_PERFECT_REVIEW,
+  isAnyDemoSample,
+  getDemoReviewForCode
+} from '../data/demoReview';
 
 export default function ResultsView({ reviewData: initialReviewData, onBackToForm, onReAudit }) {
   const [reviewData, setReviewData] = useState(initialReviewData);
@@ -81,10 +87,10 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const criticalSecCount = security.filter(s => ['critical', 'high'].includes(s.severity?.toLowerCase())).length;
 
   const allFindings = [
-    ...security.map(item => ({ ...item, category: 'security', categoryLabel: 'AppSec Risk', icon: ShieldAlert, color: 'rose' })),
-    ...bugs.map(item => ({ ...item, category: 'bug', categoryLabel: 'Logic Flaw', icon: Bug, color: 'amber' })),
-    ...performance.map(item => ({ ...item, category: 'perf', categoryLabel: 'Performance', icon: Zap, color: 'emerald' })),
-    ...style.map(item => ({ ...item, category: 'style', categoryLabel: 'Style / Lint', icon: Palette, color: 'purple' })),
+    ...security.map((item, i) => ({ ...item, findingId: item.id || `sec_${i}`, category: 'security', categoryLabel: 'AppSec Risk', icon: ShieldAlert, color: 'rose' })),
+    ...bugs.map((item, i) => ({ ...item, findingId: item.id || `bug_${i}`, category: 'bug', categoryLabel: 'Logic Flaw', icon: Bug, color: 'amber' })),
+    ...performance.map((item, i) => ({ ...item, findingId: item.id || `perf_${i}`, category: 'perf', categoryLabel: 'Performance', icon: Zap, color: 'emerald' })),
+    ...style.map((item, i) => ({ ...item, findingId: item.id || `style_${i}`, category: 'style', categoryLabel: 'Style / Lint', icon: Palette, color: 'purple' })),
   ];
 
   const filteredFindings = allFindings.filter(f => {
@@ -141,10 +147,22 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
 
   // Safe Remediated Code (Prioritize Backend Agent Remediated Code)
   const getCleanRemediatedCode = () => {
-    if (remediated_code && remediated_code.trim() && remediated_code.includes('{')) {
-      return formatLeetCodeIndentation(remediated_code.trim());
+    let source = (remediated_code && remediated_code.trim())
+      ? remediated_code.trim()
+      : (code_snippet || currentCode || '');
+
+    const orig = code_snippet || currentCode || '';
+    const origHasHeaders = /^\s*#?\s*include\b/m.test(orig);
+    const origHasUsingStd = /^\s*using\s+namespace\s+std\s*;/m.test(orig);
+
+    if (!origHasHeaders) {
+      source = source.replace(/^\s*#?\s*include\s*<[^>]+>\s*$/gm, '');
     }
-    return formatLeetCodeIndentation(code_snippet || currentCode || '');
+    if (!origHasUsingStd) {
+      source = source.replace(/^\s*using\s+namespace\s+std\s*;\s*$/gm, '');
+    }
+
+    return formatLeetCodeIndentation(source.trim());
   };
 
   const fullyRemediatedCode = getCleanRemediatedCode();
@@ -240,6 +258,28 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
     if (!targetCode) return 1;
     const lines = targetCode.split('\n');
 
+    // 0. Priority: Explicit detected_line
+    if (item.detected_line && typeof item.detected_line === 'string') {
+      const needle = item.detected_line.trim();
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(needle)) {
+          return i + 1;
+        }
+      }
+    }
+
+    // 1. Priority: First line of target_snippet
+    if (item.target_snippet && typeof item.target_snippet === 'string') {
+      const firstLine = item.target_snippet.trim().split('\n')[0].trim();
+      if (firstLine.length >= 4) {
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes(firstLine)) {
+            return i + 1;
+          }
+        }
+      }
+    }
+
     const specificPatterns = (item.issue + ' ' + (item.suggestion || '')).match(/\([A-Za-z0-9_&*\s]+\)|`([^`]+)`|'([^']+)'/g);
     if (specificPatterns) {
       for (const pat of specificPatterns) {
@@ -299,44 +339,86 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   };
 
   // 🔴 Red: Revert that specific line to the user's original submission
-  const handleToggleMistakeLine = (item, idx) => {
+  const handleToggleMistakeLine = (item, key) => {
+    const findingKey = key || item.findingId || item.id;
+    const state = findingLineState[findingKey];
     const lineNum = findExactLineNumberInCode(item, currentCode);
-    if (!lineNum) return;
 
-    const origLines = (code_snippet || '').split('\n');
-    const origLine = origLines[lineNum - 1];
+    if (state && typeof state === 'object' && state.status === 'fixed') {
+      if (state.type === 'block' && state.origSnippet && state.newSnippet) {
+        const updated = currentCode.replace(state.newSnippet, state.origSnippet);
+        updateCode(updated);
+        setFindingLineState(prev => ({ ...prev, [findingKey]: 'original' }));
+      } else if (state.type === 'inserted' && state.insertedText) {
+        const lines = currentCode.split('\n');
+        const matchIdx = lines.findIndex(l => l.trim() === state.insertedText.trim());
+        if (matchIdx !== -1) {
+          lines.splice(matchIdx, 1);
+          updateCode(lines.join('\n'));
+        }
+        setFindingLineState(prev => ({ ...prev, [findingKey]: 'original' }));
+      } else if (state.type === 'replaced' && state.origLine !== undefined) {
+        const lines = currentCode.split('\n');
+        if (state.lineIndex < lines.length) {
+          lines[state.lineIndex] = state.origLine;
+          updateCode(lines.join('\n'));
+        }
+        setFindingLineState(prev => ({ ...prev, [findingKey]: 'original' }));
+      } else {
+        setFindingLineState(prev => ({ ...prev, [findingKey]: 'original' }));
+      }
+    } else if (lineNum) {
+      const origLines = (code_snippet || '').split('\n');
+      const origLine = origLines[lineNum - 1];
 
-    if (origLine !== undefined) {
-      const lines = currentCode.split('\n');
-      lines[lineNum - 1] = origLine;
-      const updated = lines.join('\n');
-      updateCode(updated);
-      setFindingLineState(prev => ({ ...prev, [idx]: 'original' }));
+      if (origLine !== undefined) {
+        const lines = currentCode.split('\n');
+        lines[lineNum - 1] = origLine;
+        const updated = lines.join('\n');
+        updateCode(updated);
+        setFindingLineState(prev => ({ ...prev, [findingKey]: 'original' }));
+      }
     }
 
-    setHighlightedLine(lineNum);
-    focusLineInEditor(lineNum);
+    if (lineNum) {
+      setHighlightedLine(lineNum);
+      focusLineInEditor(lineNum);
+    }
   };
 
-  // 🟢 Green: Apply fixed code cleanly (Never inserting conversational English sentences!)
-  const handleToggleFixedLine = (item, idx) => {
+  // 🟢 Green: Apply fixed code cleanly (Never duplicating lines or overwriting function headers)
+  const handleToggleFixedLine = (item, key) => {
+    const findingKey = key || item.findingId || item.id;
+
+    // 1. Idempotency: If this finding is ALREADY fixed, clicking it again toggles it off (reverts)
+    if (findingLineState[findingKey]?.status === 'fixed' || findingLineState[findingKey] === 'fixed') {
+      handleToggleMistakeLine(item, findingKey);
+      return;
+    }
+
     const lineNum = findExactLineNumberInCode(item, currentCode);
     const suggestion = item.suggestion || '';
     if (!lineNum) return;
 
     let replacement = '';
 
+    // 0. Priority: Use explicit remediation_code on the finding
+    if (item.remediation_code && typeof item.remediation_code === 'string') {
+      replacement = item.remediation_code.trim();
+    }
+
     // 1. Try to extract explicit code enclosed in backticks `...` or quotes '...'
-    const codeMatch = suggestion.match(/`([^`]+)`|'([^']+)'/);
-    if (codeMatch) {
-      const candidate = (codeMatch[1] || codeMatch[2] || '').trim();
-      // Ensure candidate is real code, not a plain english word
-      if (candidate && !['const', 'auto', 'int', 'true', 'false'].includes(candidate) && candidate.length > 2) {
-        replacement = candidate;
+    if (!replacement) {
+      const codeMatch = suggestion.match(/`([^`]+)`|'([^']+)'/);
+      if (codeMatch) {
+        const candidate = (codeMatch[1] || codeMatch[2] || '').trim();
+        if (candidate && !['const', 'auto', 'int', 'true', 'false'].includes(candidate) && candidate.length > 2) {
+          replacement = candidate;
+        }
       }
     }
 
-    // 2. If suggestion is "return x == y;" or similar explicit return statement
+    // 2. If suggestion is a return statement
     if (!replacement) {
       const returnMatch = suggestion.match(/(return\s+[^;.]+;?)/i);
       if (returnMatch) {
@@ -352,10 +434,73 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
       }
     }
 
-    // 4. Guard against writing plain English sentences into code
-    const isEnglishSentence = replacement.split(' ').length > 6 && !replacement.includes('(') && !replacement.includes(';');
-    if (isEnglishSentence || !replacement) {
-      // Just focus and select the line in editor
+    // 4. Duplicate prevention: if code already contains this exact replacement, do NOT insert again!
+    if (replacement && currentCode.includes(replacement.trim())) {
+      setFindingLineState(prev => ({ 
+        ...prev, 
+        [findingKey]: { status: 'fixed', type: 'existing' } 
+      }));
+      setHighlightedLine(lineNum);
+      focusLineInEditor(lineNum);
+      return;
+    }
+
+    // 5. Special AppSec Integer Overflow Guard:
+    // If hash map is already applied (which uses subtraction `target - nums[i]`), overflow is already fixed!
+    if ((item.category === 'security' || /overflow/i.test(item.issue || '')) && 
+        (currentCode.includes('unordered_map') || currentCode.includes('target - nums[i]'))) {
+      setFindingLineState(prev => ({ 
+        ...prev, 
+        [findingKey]: { status: 'fixed', type: 'existing' } 
+      }));
+      setHighlightedLine(lineNum);
+      focusLineInEditor(lineNum);
+      return;
+    }
+
+    // 6. Multi-line Nested Loop Replacement (Performance)
+    // Replace entire nested loops (with comments and inner loops) with optimal hash map
+    const isLoopReplacement = (item.category === 'perf' || /loop|unordered_map|hash/i.test(suggestion)) &&
+      (replacement.includes('unordered_map') || replacement.includes('hash'));
+
+    if (isLoopReplacement) {
+      // Matches everything from `// Performance Issue...` or `for (int i = 0; ...)` up to right before `return {};`
+      const loopBlockRegex = /(?:\/\/[^\n]*\n\s*)?for\s*\(\s*int\s+i\s*=\s*0[\s\S]*?\n(?=\s*return\s*\{\};)/;
+      
+      if (loopBlockRegex.test(currentCode)) {
+        const origSnippet = currentCode.match(loopBlockRegex)[0];
+        const newSnippet = `    // Optimal O(n) single-pass hash map solution
+    unordered_map<int, int> seen;
+    for (int i = 0; i < nums.size(); i++) {
+        int complement = target - nums[i];
+        if (seen.count(complement)) {
+            return {seen[complement], i};
+        }
+        seen[nums[i]] = i;
+    }
+`;
+        const updated = formatLeetCodeIndentation(currentCode.replace(loopBlockRegex, newSnippet));
+        updateCode(updated);
+        setFindingLineState(prev => ({ 
+          ...prev, 
+          [findingKey]: { status: 'fixed', type: 'block', origSnippet, newSnippet } 
+        }));
+        setHighlightedLine(lineNum);
+        focusLineInEditor(lineNum);
+        return;
+      }
+    }
+
+    // 7. General Block Replacement via target_snippet
+    if (item.target_snippet && currentCode.includes(item.target_snippet.trim())) {
+      const origText = item.target_snippet.trim();
+      const newText = replacement.trim();
+      const updated = currentCode.replace(origText, newText);
+      updateCode(updated);
+      setFindingLineState(prev => ({ 
+        ...prev, 
+        [findingKey]: { status: 'fixed', type: 'block', origSnippet: origText, newSnippet: newText } 
+      }));
       setHighlightedLine(lineNum);
       focusLineInEditor(lineNum);
       return;
@@ -363,11 +508,65 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
 
     const lines = currentCode.split('\n');
     if (lineNum - 1 < lines.length) {
-      const origIndent = (lines[lineNum - 1].match(/^\s*/) || [''])[0];
-      lines[lineNum - 1] = origIndent + replacement;
-      const updated = lines.join('\n');
+      const origLine = lines[lineNum - 1];
+      const origIndent = (origLine.match(/^\s*/) || [''])[0];
+
+      // Fix if-condition fragments: e.g. "target - nums[i] == nums[j]" -> "if (target - nums[i] == nums[j]) {"
+      if (origLine.trim().startsWith('if') && origLine.trim().endsWith('{')) {
+        if (!replacement.startsWith('if') && !replacement.endsWith('{')) {
+          if (replacement.includes('==') || replacement.includes('!=') || replacement.includes('<') || replacement.includes('>')) {
+            replacement = `if (${replacement}) {`;
+          }
+        }
+      }
+
+      // Guard against writing conversational English sentences into code
+      const isEnglishSentence = replacement.split(' ').length > 6 && !replacement.includes('(') && !replacement.includes(';') && !replacement.includes('{');
+      if (isEnglishSentence || !replacement) {
+        setHighlightedLine(lineNum);
+        focusLineInEditor(lineNum);
+        return;
+      }
+
+      // Check whether this fix should be entered below the line instead of overwriting it
+      const currentEndsWithBrace = origLine.trim().endsWith('{');
+      const replacementEndsWithBrace = replacement.trim().endsWith('{');
+      const isBoundaryCheckOrInsert = item.action === 'insert_below' ||
+        /insert|add|below|early exit|boundary check|guard/i.test(suggestion);
+
+      // If inserting boundary/exit condition inside a block header, enter it below with proper indentation
+      const shouldInsertBelow = isBoundaryCheckOrInsert && currentEndsWithBrace && !replacementEndsWithBrace;
+
+      if (shouldInsertBelow) {
+        // Prevent duplicate insertion: check if code already contains this line anywhere
+        if (currentCode.includes(replacement.trim())) {
+          setFindingLineState(prev => ({ 
+            ...prev, 
+            [findingKey]: { status: 'fixed', type: 'existing' } 
+          }));
+          setHighlightedLine(lineNum);
+          focusLineInEditor(lineNum);
+          return;
+        }
+
+        const innerIndent = origIndent + '    ';
+        const formatted = replacement.split('\n').map(l => innerIndent + l.trim()).join('\n');
+        lines.splice(lineNum, 0, formatted);
+        setFindingLineState(prev => ({ 
+          ...prev, 
+          [findingKey]: { status: 'fixed', type: 'inserted', lineIndex: lineNum, insertedText: formatted } 
+        }));
+      } else {
+        const formatted = replacement.split('\n').map((l, i) => i === 0 ? origIndent + l.trim() : origIndent + l).join('\n');
+        lines[lineNum - 1] = formatted;
+        setFindingLineState(prev => ({ 
+          ...prev, 
+          [findingKey]: { status: 'fixed', type: 'replaced', lineIndex: lineNum - 1, origLine } 
+        }));
+      }
+
+      const updated = formatLeetCodeIndentation(lines.join('\n'));
       updateCode(updated);
-      setFindingLineState(prev => ({ ...prev, [idx]: 'fixed' }));
     }
 
     setHighlightedLine(lineNum);
@@ -378,8 +577,8 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const handleApplyAllFixes = () => {
     const updated = fullyRemediatedCode;
     const newStates = {};
-    allFindings.forEach((_, idx) => {
-      newStates[idx] = 'fixed';
+    allFindings.forEach((item) => {
+      newStates[item.findingId] = 'fixed';
     });
 
     updateCode(updated);
@@ -391,6 +590,24 @@ export default function ResultsView({ reviewData: initialReviewData, onBackToFor
   const handleInPlaceReAudit = async () => {
     setIsReAuditing(true);
     try {
+      if (reviewData?.is_demo || isAnyDemoSample(currentCode)) {
+        // Zero-token instant re-audit for demo mode: no backend API calls or counter increments
+        await new Promise((r) => setTimeout(r, 600));
+        const isRemediated = allFixesApplied || currentCode.trim() === DEMO_REMEDIATED_CODE.trim();
+        const baseReview = isRemediated ? DEMO_PERFECT_REVIEW : getDemoReviewForCode(currentCode);
+        const newData = {
+          ...baseReview,
+          code_snippet: currentCode,
+          created_at: new Date().toISOString()
+        };
+        setReviewData(newData);
+        setFindingLineState({});
+        setHighlightedLine(null);
+        setSelectedFindingIdx(null);
+        setAllFixesApplied(false);
+        return;
+      }
+
       sessionStorage.setItem('cr_raw_code', currentCode);
       sessionStorage.setItem('cr_input_mode', 'code');
 
@@ -511,6 +728,37 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
           </button>
         </div>
       </div>
+
+      {/* Degradation Warning Banner */}
+      {(() => {
+        const agentStatuses = reviewData?.agent_statuses || {};
+        const hasDegraded = Object.values(agentStatuses).some(s => s === 'timeout' || s === 'error');
+        if (!hasDegraded) return null;
+        return (
+          <div className="p-3.5 px-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 text-xs flex flex-wrap items-center justify-between gap-3 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>
+                <strong>Partial Review Notice:</strong> One or more specialist agents encountered a timeout or error. Successful agent findings are presented below.
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 font-mono text-[10px]">
+              {Object.entries(agentStatuses).map(([name, st]) => (
+                <span 
+                  key={name} 
+                  className={`px-2 py-0.5 rounded-md font-semibold ${
+                    st === 'ok' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' :
+                    st === 'timeout' ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' :
+                    st === 'error' ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400' : 'bg-slate-500/10 text-slate-400'
+                  }`}
+                >
+                  {name}: {st}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Executive Command Center */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -865,35 +1113,55 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                 </button>
                 <button
                   onClick={() => setActiveTab('security')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'security' ? 'bg-rose-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  AppSec ({security.length})
+                  <span>AppSec ({security.length})</span>
+                  {reviewData?.agent_statuses?.security && reviewData.agent_statuses.security !== 'ok' && (
+                    <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                      {reviewData.agent_statuses.security}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setActiveTab('bug')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'bug' ? 'bg-amber-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  Bugs ({bugs.length})
+                  <span>Bugs ({bugs.length})</span>
+                  {reviewData?.agent_statuses?.bugs && reviewData.agent_statuses.bugs !== 'ok' && (
+                    <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                      {reviewData.agent_statuses.bugs}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setActiveTab('perf')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'perf' ? 'bg-emerald-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  Perf ({performance.length})
+                  <span>Perf ({performance.length})</span>
+                  {reviewData?.agent_statuses?.performance && reviewData.agent_statuses.performance !== 'ok' && (
+                    <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                      {reviewData.agent_statuses.performance}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setActiveTab('style')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'style' ? 'bg-purple-600 text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  Style ({style.length})
+                  <span>Style ({style.length})</span>
+                  {reviewData?.agent_statuses?.style && reviewData.agent_statuses.style !== 'ok' && (
+                    <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                      {reviewData.agent_statuses.style}
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -920,13 +1188,17 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                 filteredFindings.map((item, idx) => {
                   const Icon = item.icon;
                   const isSelected = selectedFindingIdx === idx;
-                  const lineNum = findExactLineNumberInCode(item, currentCode);
-                  const originalLineText = getLineText(lineNum, code_snippet) || getLineText(lineNum, currentCode);
-                  const isLineFixed = findingLineState[idx] === 'fixed';
+                  const origLineMatch = String(item.line || '').match(/\d+/);
+                  const origLineNum = origLineMatch ? parseInt(origLineMatch[0], 10) : 1;
+                  const findingKey = item.findingId || item.id || `f_${idx}`;
+                  const isLineFixed = findingLineState[findingKey] === 'fixed' || findingLineState[findingKey]?.status === 'fixed';
+                  const originalLineText = (item.detected_line && item.detected_line.trim())
+                    ? item.detected_line.trim()
+                    : (getLineText(origLineNum, code_snippet) || getLineText(origLineNum, currentCode));
 
                   return (
                     <div 
-                      key={idx} 
+                      key={findingKey} 
                       onClick={() => handleSelectFinding(item, idx)}
                       className={`theme-card p-4 rounded-2xl space-y-3 transition-all cursor-pointer border ${
                         isSelected 
@@ -940,7 +1212,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                             <Icon className="w-3.5 h-3.5" />
                           </span>
                           <span className="text-xs font-bold text-[var(--text-primary)] font-mono">
-                            Line {lineNum}
+                            Line {origLineNum}
                           </span>
                           {item.cwe_id && (
                             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/10 text-rose-500 border border-rose-500/20">
@@ -968,13 +1240,13 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                           <div 
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleToggleMistakeLine(item, idx);
+                              handleToggleMistakeLine(item, findingKey);
                             }}
                             className="p-2.5 px-3 border-b border-[var(--border-subtle)] bg-rose-500/10 hover:bg-rose-500/20 transition-colors cursor-pointer"
                             title="Click to view & select your original line in editor"
                           >
                             <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block mb-1">
-                              🔴 Mistake / Detected Line (Line {lineNum}) • Click to Focus
+                              🔴 Mistake / Detected Line (Line {origLineNum}) • Click to Focus
                             </span>
                             <div className="text-[11px] text-rose-400 font-mono whitespace-pre truncate">
                               {originalLineText}
@@ -987,7 +1259,7 @@ ${allFindings.slice(0, 5).map(f => `- **${f.categoryLabel} [${f.line || 'Global'
                           <div 
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleToggleFixedLine(item, idx);
+                              handleToggleFixedLine(item, findingKey);
                             }}
                             className="p-2.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors cursor-pointer"
                             title="Click to apply clean fix into your code editor"
