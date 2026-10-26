@@ -7,6 +7,37 @@ from agents.performance_agent import analyze_performance
 from agents.summary_agent import generate_summary
 from agents.remediation_agent import generate_remediated_code
 
+# Concurrency semaphore to prevent micro-burst 429 throttling
+AGENT_SEMAPHORE = asyncio.Semaphore(10)
+
+async def _run_agent_safely(coro, agent_name: str, fallback_key: str, timeout: float = 30.0) -> dict:
+    """
+    Executes an agent coroutine bounded by a global concurrency semaphore and per-agent timeout.
+    Catches timeouts and exceptions to guarantee graceful partial degradation.
+    """
+    async with AGENT_SEMAPHORE:
+        try:
+            res = await asyncio.wait_for(coro, timeout=timeout)
+            if isinstance(res, dict):
+                if "error" in res:
+                    res["status"] = "error"
+                else:
+                    res["status"] = "ok"
+                return res
+            return {fallback_key: res, "status": "ok"}
+        except asyncio.TimeoutError:
+            return {
+                fallback_key: [] if fallback_key not in ["summary", "remediation"] else "",
+                "error": f"{agent_name} timed out after {timeout}s",
+                "status": "timeout"
+            }
+        except Exception as exc:
+            return {
+                fallback_key: [] if fallback_key not in ["summary", "remediation"] else "",
+                "error": f"{agent_name} failed: {str(exc)}",
+                "status": "error"
+            }
+
 def calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues):
     # Category sub-scores starting at 100
     style_sub = max(0, 100 - len(style_issues) * 5)
@@ -65,7 +96,6 @@ def sanitize_line_numbers(issues_list, total_lines: int):
             if nums:
                 val = int(nums[0])
                 if val > total_lines:
-                    # Clamp to last valid line
                     item["line"] = f"Line {total_lines}"
                 elif val < 1:
                     item["line"] = "Line 1"
@@ -127,7 +157,6 @@ async def run_orchestrator(
     if agents_config is None:
         agents_config = {"style": True, "bugs": True, "security": True, "performance": True}
 
-    # Keep code strictly clean and line numbers pure
     combined_ctx = ""
     if problem_context or constraints:
         parts = []
@@ -141,37 +170,44 @@ async def run_orchestrator(
     task_keys = []
 
     if agents_config.get("style", True):
-        tasks.append(analyze_style(code, language, problem_context=combined_ctx))
+        tasks.append(_run_agent_safely(analyze_style(code, language, problem_context=combined_ctx), "Style Agent", "issues"))
         task_keys.append("style")
     if agents_config.get("bugs", True):
-        tasks.append(analyze_bugs(code, language, problem_context=combined_ctx))
+        tasks.append(_run_agent_safely(analyze_bugs(code, language, problem_context=combined_ctx), "Bug Agent", "bugs"))
         task_keys.append("bugs")
     if agents_config.get("security", True):
-        tasks.append(analyze_security(code, language, problem_context=combined_ctx))
+        tasks.append(_run_agent_safely(analyze_security(code, language, problem_context=combined_ctx), "Security Agent", "security"))
         task_keys.append("security")
     if agents_config.get("performance", True):
-        tasks.append(analyze_performance(code, language, problem_context=combined_ctx))
+        tasks.append(_run_agent_safely(analyze_performance(code, language, problem_context=combined_ctx), "Performance Agent", "performance"))
         task_keys.append("performance")
 
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
 
-    style_res = {"issues": []}
-    bug_res = {"bugs": []}
-    sec_res = {"security": []}
-    perf_res = {"performance": []}
+    style_res = {"issues": [], "status": "disabled"}
+    bug_res = {"bugs": [], "status": "disabled"}
+    sec_res = {"security": [], "status": "disabled"}
+    perf_res = {"performance": [], "status": "disabled"}
 
     for key, res in zip(task_keys, results_list):
         if isinstance(res, Exception):
-            res = {"error": str(res)}
+            res = {"error": str(res), "status": "error"}
 
         if key == "style":
-            style_res = res if isinstance(res, dict) else {"issues": [], "error": str(res)}
+            style_res = res if isinstance(res, dict) else {"issues": [], "error": str(res), "status": "error"}
         elif key == "bugs":
-            bug_res = res if isinstance(res, dict) else {"bugs": [], "error": str(res)}
+            bug_res = res if isinstance(res, dict) else {"bugs": [], "error": str(res), "status": "error"}
         elif key == "security":
-            sec_res = res if isinstance(res, dict) else {"security": [], "error": str(res)}
+            sec_res = res if isinstance(res, dict) else {"security": [], "error": str(res), "status": "error"}
         elif key == "performance":
-            perf_res = res if isinstance(res, dict) else {"performance": [], "error": str(res)}
+            perf_res = res if isinstance(res, dict) else {"performance": [], "error": str(res), "status": "error"}
+
+    agent_statuses = {
+        "style": style_res.get("status", "ok"),
+        "bugs": bug_res.get("status", "ok"),
+        "security": sec_res.get("status", "ok"),
+        "performance": perf_res.get("status", "ok")
+    }
 
     raw_style = style_res.get("issues", [])
     raw_bugs = bug_res.get("bugs", [])
@@ -190,10 +226,21 @@ async def run_orchestrator(
         raw_style, raw_bugs, raw_sec, raw_perf
     )
 
-    # Parallelize executive summary & 100% complete remediated code generation
-    summary_task = generate_summary(style_res, bug_res, sec_res)
-    remediation_task = generate_remediated_code(code, language, style_issues, bug_issues, sec_issues, perf_issues)
-    summary_text, remediated_code_text = await asyncio.gather(summary_task, remediation_task)
+    # Run executive summary & code remediation
+    summary_task = _run_agent_safely(
+        generate_summary(style_res, bug_res, sec_res, perf_res),
+        "Summary Agent",
+        "summary"
+    )
+    remediation_task = _run_agent_safely(
+        generate_remediated_code(code, language, style_issues, bug_issues, sec_issues, perf_issues),
+        "Remediation Agent",
+        "remediation"
+    )
+    summary_res, remediation_res = await asyncio.gather(summary_task, remediation_task)
+
+    summary_text = summary_res if isinstance(summary_res, str) else summary_res.get("summary", "Code review completed.")
+    remediated_code_text = remediation_res if isinstance(remediation_res, str) else remediation_res.get("remediation", code)
 
     health_data = calculate_health_score(style_issues, bug_issues, sec_issues, perf_issues)
 
@@ -204,5 +251,6 @@ async def run_orchestrator(
         "performance": perf_issues,
         "summary": summary_text,
         "health_score": health_data,
-        "remediated_code": remediated_code_text
+        "remediated_code": remediated_code_text,
+        "agent_statuses": agent_statuses
     }
