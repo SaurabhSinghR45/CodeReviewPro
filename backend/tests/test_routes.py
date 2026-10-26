@@ -2,8 +2,18 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 from main import app
+from config import settings
+from routes.review import reset_rate_limits
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def setup_test_env():
+    settings.TESTING = True
+    reset_rate_limits()
+    yield
+    settings.TESTING = True
+    reset_rate_limits()
 
 def test_health_check():
     res = client.get("/health")
@@ -33,7 +43,8 @@ def test_create_review_success():
         "security": [],
         "performance": [],
         "summary": "Mock summary test",
-        "remediated_code": "def hello(): pass"
+        "remediated_code": "def hello(): pass",
+        "agent_statuses": {"style": "ok", "bugs": "ok", "security": "ok", "performance": "ok"}
     }
 
     with patch("routes.review.run_orchestrator", new=AsyncMock(return_value=mock_orchestration)):
@@ -43,6 +54,7 @@ def test_create_review_success():
         assert "id" in data
         assert data["summary"] == "Mock summary test"
         assert len(data["style"]) == 1
+        assert data["agent_statuses"]["style"] == "ok"
 
         review_id = data["id"]
 
@@ -58,3 +70,33 @@ def test_create_review_success():
         detail_data = detail_res.json()
         assert detail_data["id"] == review_id
         assert detail_data["summary"] == "Mock summary test"
+
+def test_rate_limiting_enforcement():
+    settings.TESTING = False
+    reset_rate_limits()
+    settings.RATE_LIMIT_PER_MINUTE = 3
+
+    mock_orchestration = {
+        "style": [],
+        "bugs": [],
+        "security": [],
+        "performance": [],
+        "summary": "OK",
+        "remediated_code": ""
+    }
+
+    with patch("routes.review.run_orchestrator", new=AsyncMock(return_value=mock_orchestration)):
+        # Requests 1, 2, 3 should succeed
+        for _ in range(3):
+            res = client.post("/review", json={"raw_code": "x = 1"})
+            assert res.status_code == 201
+
+        # Request 4 should be rate limited with HTTP 429 and Retry-After
+        res = client.post("/review", json={"raw_code": "x = 1"})
+        assert res.status_code == 429
+        assert "Rate limit exceeded" in res.json()["detail"]
+        assert "Retry-After" in res.headers
+
+    # Reset
+    settings.TESTING = True
+    reset_rate_limits()

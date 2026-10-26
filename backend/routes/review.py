@@ -1,5 +1,7 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException, status
+import time
+from collections import defaultdict
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -15,10 +17,46 @@ from schemas import (
 )
 from github_fetcher import fetch_github_code, inspect_github_repo
 from agents.orchestrator import run_orchestrator
+from config import settings
 
 router = APIRouter(prefix="", tags=["Reviews"])
 
 MAX_CODE_CHARS = 20000
+
+# In-memory sliding-window rate limiter to protect LLM quota
+_review_rate_limits = defaultdict(list)
+
+def check_review_rate_limit(request: Request):
+    """
+    Enforces a sliding-window rate limit per client IP.
+    Bypassed if settings.TESTING is True.
+    """
+    if getattr(settings, "TESTING", False):
+        return
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+
+    now = time.time()
+    window_start = now - 60.0
+    timestamps = [t for t in _review_rate_limits[client_ip] if t > window_start]
+    _review_rate_limits[client_ip] = timestamps
+
+    limit = getattr(settings, "RATE_LIMIT_PER_MINUTE", 10)
+    if len(timestamps) >= limit:
+        retry_after = int(60 - (now - timestamps[0])) + 1
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Maximum {limit} reviews per minute allowed.",
+            headers={"Retry-After": str(max(1, retry_after))}
+        )
+    _review_rate_limits[client_ip].append(now)
+
+def reset_rate_limits():
+    """Helper used in test suites to reset rate limit tracking."""
+    _review_rate_limits.clear()
 
 @router.post("/github/inspect", response_model=InspectRepoResponse)
 async def inspect_repo_endpoint(req: InspectRepoRequest):
@@ -35,8 +73,19 @@ async def inspect_repo_endpoint(req: InspectRepoRequest):
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to inspect GitHub repository: {str(e)}")
 
-@router.post("/review", response_model=ReviewResponse, status_code=status.HTTP_201_CREATED)
-@router.post("/reviews", response_model=ReviewResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post(
+    "/review", 
+    response_model=ReviewResponse, 
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(check_review_rate_limit)]
+)
+@router.post(
+    "/reviews", 
+    response_model=ReviewResponse, 
+    status_code=status.HTTP_201_CREATED, 
+    include_in_schema=False,
+    dependencies=[Depends(check_review_rate_limit)]
+)
 async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
     # 1. Input Validation: exactly one of github_url or raw_code must be provided
     has_url = bool(req.github_url and req.github_url.strip())
@@ -81,7 +130,7 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
             detail=f"Submitted code exceeds character limit of {MAX_CODE_CHARS} characters (got {len(code_to_review)} characters)."
         )
 
-    # 4. Run multi-agent orchestrator
+    # 4. Run multi-agent orchestrator (DB write transaction is not locked during LLM calls)
     language = req.language or "auto"
     agents_cfg = req.agents_config.model_dump() if req.agents_config else {"style": True, "bugs": True, "security": True, "performance": True}
     strictness = req.strictness or "standard"
@@ -98,25 +147,32 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
         "score": 100, "grade": "A+", "style_score": 100, "bug_score": 100, "security_score": 100, "performance_score": 100
     })
 
-    # 5. Save to database with user_email isolation
+    # 5. Short-lived database write transaction after AI agents have returned
     user_email = req.user_email.strip() if req.user_email and req.user_email.strip() else "guest@codereview.pro"
-    db_review = Review(
-        user_email=user_email,
-        source_url=source_url,
-        language=language,
-        code_snippet=code_to_review,
-        health_score=health_data.get("score", 100),
-        health_grade=health_data.get("grade", "A+"),
-        style_findings=json.dumps(orchestrator_res["style"]),
-        bug_findings=json.dumps(orchestrator_res["bugs"]),
-        security_findings=json.dumps(orchestrator_res["security"]),
-        performance_findings=json.dumps(orchestrator_res.get("performance", [])),
-        summary=orchestrator_res["summary"],
-        remediated_code=orchestrator_res.get("remediated_code", "")
-    )
-    db.add(db_review)
-    db.commit()
-    db.refresh(db_review)
+    try:
+        db_review = Review(
+            user_email=user_email,
+            source_url=source_url,
+            language=language,
+            code_snippet=code_to_review,
+            health_score=health_data.get("score", 100),
+            health_grade=health_data.get("grade", "A+"),
+            style_findings=json.dumps(orchestrator_res["style"]),
+            bug_findings=json.dumps(orchestrator_res["bugs"]),
+            security_findings=json.dumps(orchestrator_res["security"]),
+            performance_findings=json.dumps(orchestrator_res.get("performance", [])),
+            summary=orchestrator_res["summary"],
+            remediated_code=orchestrator_res.get("remediated_code", "")
+        )
+        db.add(db_review)
+        db.commit()
+        db.refresh(db_review)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to persist review record: {str(exc)}"
+        )
 
     return ReviewResponse(
         id=db_review.id,
@@ -130,14 +186,28 @@ async def create_review(req: ReviewRequest, db: Session = Depends(get_db)):
         performance=orchestrator_res.get("performance", []),
         summary=db_review.summary,
         remediated_code=db_review.remediated_code or orchestrator_res.get("remediated_code", ""),
-        created_at=db_review.created_at.isoformat()
+        created_at=db_review.created_at.isoformat(),
+        agent_statuses=orchestrator_res.get("agent_statuses")
     )
 
 @router.get("/reviews", response_model=List[ReviewListItem])
-def list_reviews(user_email: Optional[str] = None, db: Session = Depends(get_db)):
+def list_reviews(
+    user_email: Optional[str] = None,
+    project: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     query = db.query(Review)
-    if user_email and user_email.strip() and user_email.strip() != "all":
-        query = query.filter(Review.user_email == user_email.strip())
+    if project and project.strip():
+        p = f"%{project.strip()}%"
+        query = query.filter((Review.source_url.ilike(p)) | (Review.summary.ilike(p)))
+    elif user_email and user_email.strip() and user_email.strip() != "all":
+        # Include reviews belonging to user, or workspace project reviews
+        query = query.filter(
+            (Review.user_email == user_email.strip()) |
+            (Review.user_email == "guest@codereview.pro") |
+            (Review.source_url.ilike("%VibeSync%")) |
+            (Review.source_url.ilike("%CodeReviewPro%"))
+        )
     reviews = query.order_by(Review.created_at.desc()).all()
     return [
         ReviewListItem(
@@ -184,5 +254,6 @@ def get_review(review_id: int, db: Session = Depends(get_db)):
         security=security,
         performance=performance,
         summary=review.summary,
+        remediated_code=getattr(review, "remediated_code", "") or "",
         created_at=review.created_at.isoformat()
     )

@@ -1,34 +1,49 @@
-# Environment & Secrets
+# Environment & Secrets (Never commit credentials)
 .env
 *.env
 .env.local
 .env.*.local
+backend/.env
+frontend/.env
+!*.env.example
 
-# Python
+# SQLite & Databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+backend/reviews.db
+reviews.db
+
+# Python & Virtual Environments
 backend/venv/
 venv/
+.venv/
 ENV/
 __pycache__/
 *.py[cod]
 *$py.class
-*.sqlite3
-*.db
-backend/reviews.db
+*.egg-info/
 .pytest_cache/
 .coverage
+htmlcov/
 
-# Node & Frontend
+# Node & Frontend Build Artifacts
 frontend/node_modules/
 node_modules/
 frontend/dist/
 dist/
+dist-ssr/
+.vite/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# IDE & System
-.vscode/
+# IDE, OS & System Files
+.vscode/*
+!.vscode/extensions.json
 .idea/
 .DS_Store
 Thumbs.db

@@ -81,6 +81,7 @@ class ReviewResponse(BaseModel):
     summary: str
     remediated_code: Optional[str] = ""
     created_at: str
+    agent_statuses: Optional[Dict[str, str]] = None
 
 class ReviewListItem(BaseModel):
     id: int
