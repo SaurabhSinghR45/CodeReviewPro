@@ -12,6 +12,23 @@ if (window.location.hash && (window.location.hash.includes('sign-in') || window.
     window.history.replaceState(null, '', window.location.pathname);
   } catch (e) {}
 }
+// Auto-route API calls to VITE_API_URL in production (e.g. Render backend)
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+if (API_BASE_URL) {
+  const originalFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (typeof url === 'string' && (
+      url.startsWith('/review') || 
+      url.startsWith('/reviews') || 
+      url.startsWith('/github') || 
+      url.startsWith('/health') || 
+      url.startsWith('/auth')
+    )) {
+      url = `${API_BASE_URL}${url}`;
+    }
+    return originalFetch(url, options);
+  };
+}
 
 const rawKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || ''
 const isValidClerkKey = 
