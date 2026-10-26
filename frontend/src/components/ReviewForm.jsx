@@ -31,10 +31,19 @@ import {
   Brain,
   ChevronDown,
   ImagePlus,
+  Lock,
   X
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import AgentTopology from './AgentTopology';
+import CustomSelect from './CustomSelect';
+import { 
+  DEMO_SAMPLE_CODE, 
+  DEMO_PRECOMPUTED_REVIEW, 
+  isDemoSample,
+  isAnyDemoSample, 
+  getDemoReviewForCode 
+} from '../data/demoReview';
 
 const GithubIcon = ({ className = "w-4 h-4" }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24">
@@ -48,34 +57,24 @@ const SAMPLE_REPOS = [
   { label: 'Octocat PR #1347', url: 'https://github.com/octocat/Hello-World/pull/1347' },
 ];
 
-const SAMPLE_CODE_SNIPPET = `def process_user_payment(user_id, amount, card_token=None):
-    # AppSec Vulnerability (CWE-89): Direct String Formatted SQL Injection
-    query = f"SELECT role, balance, secret_key FROM users WHERE id = '{user_id}'"
-    user = db.execute(query).fetchone()
+const SAMPLE_CODE_SNIPPET = DEMO_SAMPLE_CODE;
 
-    # Logic Bug: Unhandled None check if user is not found
-    if user['balance'] < amount:
-        raise ValueError("Insufficient funds")
-
-    # Performance Issue: Nested O(n^2) loop over user transaction history
-    all_transactions = db.query("SELECT * FROM transactions").fetchall()
-    user_txs = []
-    for tx in all_transactions:
-        for u_tx in user['history']:
-            if tx['id'] == u_tx['id']:
-                user_txs.append(tx)
-
-    # Style Issue: Missing type hints & magic values
-    if card_token == "TEST_TOKEN_2026":
-        amount = amount - 5
-    
-    # Bug Risk: Negative balance mutation
-    user['balance'] = user['balance'] - amount
-    return {"status": "success", "remaining_balance": user['balance']}
-`;
+const LANGUAGE_OPTIONS = [
+  { value: 'auto', label: 'Auto-Detect' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'python', label: 'PYTHON' },
+  { value: 'javascript', label: 'JAVASCRIPT' },
+  { value: 'typescript', label: 'TYPESCRIPT' },
+  { value: 'go', label: 'GO' },
+  { value: 'rust', label: 'RUST' },
+  { value: 'java', label: 'JAVA' },
+  { value: 'sql', label: 'SQL' },
+  { value: 'html', label: 'HTML/CSS' },
+];
 
 const LANGUAGES = [
   'auto',
+  'cpp',
   'python',
   'javascript',
   'typescript',
@@ -143,6 +142,20 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
   const [stats, setStats] = useState({ totalAudits: 0, avgHealth: 0, grade: 'N/A' });
 
   const hasFetchedStats = useRef(false);
+  const abortControllerRef = useRef(null);
+  const stepIntervalRef = useRef(null);
+
+  // Clean up in-flight requests on component unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (stepIntervalRef.current) {
+        clearInterval(stepIntervalRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isGuest) {
@@ -337,6 +350,48 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
     setErrorMsg('');
     setTerminalLogs([]);
 
+    const isSampleCode = (
+      (inputMode === 'code' && isAnyDemoSample(rawCode, uploadedFileName)) ||
+      (inputMode === 'url' && SAMPLE_REPOS.some(s => s.url.toLowerCase() === githubUrl.trim().toLowerCase()))
+    );
+
+    // Enforce login for custom code audits; allow guests to test sample code only
+    if (isGuest && !isSampleCode) {
+      if (onOpenAuth) {
+        onOpenAuth('signup');
+      }
+      setErrorMsg('Account required: Guests can explore and test with Sample Code. Please create a free account or sign in to audit your own custom code and repositories.');
+      return;
+    }
+
+    // Zero-token instant demo review: bypasses Gemini API call and prevents database counter increment
+    if (isSampleCode && inputMode === 'code') {
+      setIsLoading(true);
+      setLoadingStep(1);
+      addLog('Initializing multi-agent review pipeline...');
+
+      setTimeout(() => {
+        setLoadingStep(2);
+        addLog('Parallel Agents analyzing: Style, Bug, AppSec, Performance...');
+      }, 350);
+
+      setTimeout(() => {
+        setLoadingStep(3);
+        addLog('Auditing OWASP Top 10, CWE security matrix, and Big-O complexity...');
+      }, 750);
+
+      setTimeout(() => {
+        setLoadingStep(4);
+        addLog('Synthesizing Staff PR review & computing Health Score...');
+        const demoData = getDemoReviewForCode(rawCode, language);
+        addLog(`Demo audit finished with Health Score: ${demoData.health_score.score}/100 (Grade ${demoData.health_score.grade}).`);
+        setIsLoading(false);
+        onReviewComplete(demoData);
+      }, 1200);
+
+      return;
+    }
+
     if (inputMode === 'url') {
       if (!githubUrl.trim()) {
         setErrorMsg('Please enter a GitHub repository, file, or PR link.');
@@ -348,7 +403,7 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
       }
     } else {
       if (!rawCode.trim()) {
-        setErrorMsg('Please paste or upload code to review.');
+        setErrorMsg('Please paste code or click "Sample" above to test.');
         return;
       }
       if (rawCode.length > MAX_CHARS) {
@@ -361,7 +416,13 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
     setLoadingStep(1);
     addLog('Initializing multi-agent review pipeline...');
 
-    const stepInterval = setInterval(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    if (stepIntervalRef.current) clearInterval(stepIntervalRef.current);
+    stepIntervalRef.current = setInterval(() => {
       setLoadingStep((prev) => {
         if (prev === 1) addLog('Parallel Agents analyzing: Style, Bug, AppSec, Performance...');
         if (prev === 2) addLog('Auditing OWASP Top 10, CWE security matrix, and Big-O complexity...');
@@ -412,10 +473,11 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(payload),
+        signal: abortControllerRef.current.signal
       });
 
       const data = await res.json();
-      clearInterval(stepInterval);
+      if (stepIntervalRef.current) clearInterval(stepIntervalRef.current);
 
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to process review.');
@@ -430,11 +492,27 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
       }, 400);
 
     } catch (err) {
-      clearInterval(stepInterval);
+      if (stepIntervalRef.current) clearInterval(stepIntervalRef.current);
       setIsLoading(false);
+      if (err.name === 'AbortError') {
+        addLog('Review cancelled by user.');
+        return;
+      }
       setErrorMsg(err.message || 'An unexpected error occurred.');
       addLog(`ERROR: ${err.message}`);
     }
+  };
+
+  const handleCancelReview = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (stepIntervalRef.current) {
+      clearInterval(stepIntervalRef.current);
+    }
+    setIsLoading(false);
+    addLog('Review cancelled by user.');
   };
 
   const loadSample = (type = 'code') => {
@@ -448,11 +526,32 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
       setErrorMsg('');
     } else {
       setInputMode('code');
-      setRawCode(SAMPLE_CODE_SNIPPET);
-      setLanguage('python');
-      setUploadedFileName('payment_service.py');
+      // If sample code is already loaded, clicking again removes it
+      if (isDemoSample(rawCode, uploadedFileName)) {
+        setRawCode('');
+        setUploadedFileName('');
+        try {
+          sessionStorage.removeItem('cr_raw_code');
+        } catch (e) {}
+      } else {
+        // Load the pure C++ DSA Two Sum problem
+        setRawCode(DEMO_SAMPLE_CODE);
+        setLanguage('cpp');
+        setUploadedFileName('two_sum.cpp');
+        try {
+          sessionStorage.setItem('cr_raw_code', DEMO_SAMPLE_CODE);
+          sessionStorage.setItem('cr_language', 'cpp');
+        } catch (e) {}
+      }
       setErrorMsg('');
     }
+  };
+
+  const handleLanguageChange = (newLang) => {
+    setLanguage(newLang);
+    try {
+      sessionStorage.setItem('cr_language', newLang);
+    } catch (e) {}
   };
 
   const filteredRepoFiles = (repoMeta?.files || []).filter(f => 
@@ -467,15 +566,23 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
           <div className="flex items-center gap-2.5 text-left">
             <ShieldCheck className="w-4 h-4 shrink-0" />
             <span>
-              <strong>Guest Session Active:</strong> You can test any code or repository instantly. Create a verified free account to sync audit history and export PDF reports.
+              <strong>Guest Session Active:</strong> You can explore all studio views and test with sample code. Register or sign in to audit your own code and repositories.
             </span>
           </div>
-          <button
-            onClick={() => onOpenAuth && onOpenAuth('signup')}
-            className="px-3 py-1 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-colors shrink-0 shadow-sm cursor-pointer"
-          >
-            Create Account
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => onOpenAuth && onOpenAuth('login')}
+              className="px-3 py-1 rounded-xl border border-blue-500/30 text-blue-600 dark:text-blue-400 font-bold text-xs hover:bg-blue-500/10 transition-colors cursor-pointer"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => onOpenAuth && onOpenAuth('signup')}
+              className="px-3 py-1 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-colors shadow-sm cursor-pointer"
+            >
+              Create Account
+            </button>
+          </div>
         </div>
       )}
 
@@ -491,8 +598,17 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
         </div>
 
         <button
-          onClick={() => { setInputMode('code'); loadSample('code'); }}
+          onClick={() => {
+            setInputMode('code');
+            setRawCode('');
+            setUploadedFileName('');
+            setErrorMsg('');
+            try {
+              sessionStorage.removeItem('cr_raw_code');
+            } catch (e) {}
+          }}
           className="syncra-btn-primary px-5 py-2.5 flex items-center gap-2 text-xs shadow-md shrink-0 cursor-pointer"
+          title="Start fresh with an empty code editor"
         >
           <Plus className="w-4 h-4" />
           <span>New Review</span>
@@ -610,17 +726,15 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
               <span className="text-[11px] font-mono font-medium">Lang:</span>
-              <select
+              <CustomSelect
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-blue-500 capitalize"
-              >
-                {LANGUAGES.map((lang) => (
-                  <option key={lang} value={lang}>
-                    {lang === 'auto' ? 'Auto-Detect' : lang.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+                onChange={handleLanguageChange}
+                options={LANGUAGE_OPTIONS}
+                className="w-36"
+                buttonClassName="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-blue-500/50 rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] font-medium flex items-center justify-between gap-1 shadow-sm cursor-pointer transition-colors"
+                menuClassName="w-36"
+                align="right"
+              />
             </div>
 
             <button
@@ -639,10 +753,19 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
             <button
               type="button"
               onClick={() => loadSample('code')}
-              className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 flex items-center gap-1"
+              className={`text-xs font-bold hover:underline underline-offset-4 flex items-center gap-1 cursor-pointer transition-colors ${
+                isAnyDemoSample(rawCode, uploadedFileName)
+                  ? 'text-amber-500 dark:text-amber-400'
+                  : 'text-blue-600 dark:text-blue-400'
+              }`}
+              title={
+                isAnyDemoSample(rawCode, uploadedFileName)
+                  ? 'Click to remove sample code'
+                  : 'Click to load sample code'
+              }
             >
               <Code className="w-3.5 h-3.5" />
-              Sample
+              <span>{isAnyDemoSample(rawCode, uploadedFileName) ? 'Remove Sample' : 'Sample'}</span>
             </button>
           </div>
         </div>
@@ -888,8 +1011,15 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setRawCode(''); setUploadedFileName(''); }}
+                        onClick={() => {
+                          setRawCode('');
+                          setUploadedFileName('');
+                          try {
+                            sessionStorage.removeItem('cr_raw_code');
+                          } catch (e) {}
+                        }}
                         className="text-[var(--text-muted)] hover:text-rose-500 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Clear editor"
                       >
                         <Trash2 className="w-3 h-3" /> Clear
                       </button>
@@ -1078,24 +1208,62 @@ export default function ReviewForm({ onReviewComplete, user, onOpenAuth }) {
               <span>to execute</span>
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="syncra-btn-primary px-7 py-3 flex items-center gap-2 text-xs shadow-lg cursor-pointer disabled:opacity-50"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Auditing via Parallel Agents...
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  Run Multi-Agent Review
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
+            <div className="flex items-center gap-2">
+              {isLoading && (
+                <button
+                  type="button"
+                  onClick={handleCancelReview}
+                  className="px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Cancel Audit
+                </button>
               )}
-            </button>
+
+              {(() => {
+                const isSampleDemo = (
+                  (inputMode === 'code' && isAnyDemoSample(rawCode, uploadedFileName)) ||
+                  (inputMode === 'url' && SAMPLE_REPOS.some(s => s.url.toLowerCase() === githubUrl.trim().toLowerCase()))
+                );
+
+                if (isGuest && !isSampleDemo) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAuth && onOpenAuth('signup')}
+                      className="syncra-btn-primary px-7 py-3 flex items-center gap-2 text-xs shadow-lg cursor-pointer bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      title="Sign in or register to audit custom code"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Sign In to Audit Your Code</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  );
+                }
+
+                return (
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="syncra-btn-primary px-7 py-3 flex items-center gap-2 text-xs shadow-lg cursor-pointer disabled:opacity-50"
+                    title={isSampleDemo ? "Audit sample demonstration code (0 tokens)" : "Run multi-agent review"}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Auditing via Parallel Agents...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        {isSampleDemo ? 'Run Sample Demo Review' : 'Run Multi-Agent Review'}
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
+                  </button>
+                );
+              })()}
+            </div>
           </div>
         </form>
       </div>

@@ -38,7 +38,7 @@ export default function Sidebar({
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  const projects = [
+  const projects = isGuest ? [] : [
     { id: 'vibesync', name: 'VibeSync', color: 'bg-blue-500', url: 'https://github.com/SaurabhSinghR45/VibeSync' },
     { id: 'codereview', name: 'CodeReviewPro', color: 'bg-purple-500', url: 'https://github.com/SaurabhSinghR45/CodeReviewPro' },
   ];
@@ -140,26 +140,44 @@ export default function Sidebar({
             <div className="px-4 pt-4 border-t border-[var(--border-subtle)] space-y-2">
               <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
                 <span>Projects</span>
-                <span className="text-[10px] text-blue-600 font-mono font-semibold">2 Active</span>
+                <span className={`text-[10px] font-mono font-semibold ${isGuest ? 'text-[var(--text-muted)]' : 'text-blue-600'}`}>
+                  {isGuest ? '0 Active' : `${projects.length} Active`}
+                </span>
               </div>
 
-              <div className="space-y-1">
-                {projects.map((proj) => (
+              {isGuest ? (
+                <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-center space-y-1">
+                  <p className="text-[11px] text-[var(--text-muted)] font-medium">No projects linked</p>
                   <button
-                    key={proj.id}
-                    onClick={() => {
-                      if (onSelectProject) onSelectProject(proj.url);
-                      setActiveNav('workbench');
-                      setIsMobileOpen(false);
-                    }}
-                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer group text-left"
+                    onClick={onOpenProfile}
+                    className="text-[10px] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer"
                   >
-                    <span className={`w-2 h-2 rounded-full ${proj.color} group-hover:scale-125 transition-transform`}></span>
-                    <span className="truncate flex-1">{proj.name}</span>
-                    <span className="text-[10px] text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity">Load ▸</span>
+                    Sign in to view projects
                   </button>
-                ))}
-              </div>
+                </div>
+              ) : projects.length === 0 ? (
+                <p className="text-[11px] text-[var(--text-muted)] italic px-1 text-xs">No active projects</p>
+              ) : (
+                <div className="space-y-1">
+                  {projects.map((proj) => (
+                    <button
+                      key={proj.id}
+                      onClick={() => {
+                        if (onSelectProject) onSelectProject(proj);
+                        setIsMobileOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer group text-left"
+                      title={`View Audit History for ${proj.name}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${proj.color} group-hover:scale-125 transition-transform`}></span>
+                      <span className="truncate flex-1 font-semibold">{proj.name}</span>
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                        Audits ▸
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

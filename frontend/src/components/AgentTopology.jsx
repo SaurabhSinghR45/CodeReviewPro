@@ -1,12 +1,12 @@
 import React from 'react';
-import { Palette, Bug, ShieldAlert, Zap, Cpu, Sparkles, Layers } from 'lucide-react';
+import { Palette, Bug, ShieldAlert, Zap, Cpu, Sparkles, Layers, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 
-export default function AgentTopology({ isAuditing = false }) {
+export default function AgentTopology({ isAuditing = false, agentStatuses = {} }) {
   const agents = [
     { id: 'style', name: 'Style & Syntax', role: 'Clean Code', icon: Palette, color: 'text-purple-400', border: 'border-purple-500/20', bg: 'bg-purple-500/5' },
-    { id: 'bug', name: 'Logic & Bugs', role: 'Runtime Safety', icon: Bug, color: 'text-amber-400', border: 'border-amber-500/20', bg: 'bg-amber-500/5' },
+    { id: 'bugs', name: 'Logic & Bugs', role: 'Runtime Safety', icon: Bug, color: 'text-amber-400', border: 'border-amber-500/20', bg: 'bg-amber-500/5' },
     { id: 'security', name: 'AppSec & CWEs', role: 'OWASP Top 10', icon: ShieldAlert, color: 'text-rose-400', border: 'border-rose-500/20', bg: 'bg-rose-500/5' },
-    { id: 'perf', name: 'O(n) Performance', role: 'Complexity & Big-O', icon: Zap, color: 'text-emerald-400', border: 'border-emerald-500/20', bg: 'bg-emerald-500/5' },
+    { id: 'performance', name: 'O(n) Performance', role: 'Complexity & Big-O', icon: Zap, color: 'text-emerald-400', border: 'border-emerald-500/20', bg: 'bg-emerald-500/5' },
   ];
 
   return (
@@ -18,7 +18,7 @@ export default function AgentTopology({ isAuditing = false }) {
         </span>
         <span className="font-mono text-[10px] text-[var(--text-muted)] flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${isAuditing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`}></span>
-          {isAuditing ? 'Auditing Codebase...' : 'Pipeline Ready (4 Agents)'}
+          {isAuditing ? 'Auditing Codebase...' : 'Pipeline Ready (4 Specialist Pods)'}
         </span>
       </div>
 
@@ -37,16 +37,27 @@ export default function AgentTopology({ isAuditing = false }) {
         <div className="md:col-span-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
           {agents.map((agent) => {
             const Icon = agent.icon;
+            const status = agentStatuses[agent.id] || (isAuditing ? 'auditing' : 'ok');
+            const isDegraded = status === 'timeout' || status === 'error';
+
             return (
               <div 
                 key={agent.id}
-                className={`p-2.5 rounded-xl border ${agent.border} ${agent.bg} flex flex-col items-center text-center justify-center transition-all ${
+                className={`p-2.5 rounded-xl border ${agent.border} ${agent.bg} flex flex-col items-center text-center justify-center transition-all relative ${
                   isAuditing ? 'animate-pulse' : ''
-                }`}
+                } ${isDegraded ? 'ring-1 ring-amber-500/40' : ''}`}
               >
                 <Icon className={`w-4 h-4 ${agent.color} mb-1`} />
                 <span className="font-semibold text-[11px] text-[var(--text-primary)] leading-tight">{agent.name}</span>
                 <span className="text-[9px] font-mono text-[var(--text-muted)] mt-0.5">{agent.role}</span>
+                
+                {/* Degradation status indicator */}
+                {isDegraded && (
+                  <span className="mt-1 px-1.5 py-0.2 text-[8px] font-mono font-bold rounded bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center gap-0.5">
+                    <Clock className="w-2.5 h-2.5" />
+                    {status}
+                  </span>
+                )}
               </div>
             );
           })}

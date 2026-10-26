@@ -46,6 +46,8 @@ export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [reviewFormKey, setReviewFormKey] = useState(0);
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState(null);
 
   // Theme Management (Light by default for clean Syncra aesthetic)
   const [theme, setTheme] = useState(() => {
@@ -125,7 +127,13 @@ export default function App() {
         sessionStorage.setItem('cr_raw_code', updatedCode);
         sessionStorage.setItem('cr_input_mode', 'code');
       } catch (e) {}
+    } else {
+      try {
+        sessionStorage.removeItem('cr_raw_code');
+        sessionStorage.setItem('cr_input_mode', 'code');
+      } catch (e) {}
     }
+    setReviewFormKey(prev => prev + 1);
     setReviewData(null);
     setShowLanding(false);
     setActiveNav('workbench');
@@ -139,6 +147,9 @@ export default function App() {
     if (navId === 'workbench') {
       setCurrentView('form');
     }
+    if (navId === 'history') {
+      setSelectedProjectFilter(null);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -148,7 +159,14 @@ export default function App() {
     setCurrentView('form');
   };
 
-  const handleSelectProject = (projectUrl) => {
+  const handleSelectProject = (project) => {
+    setSelectedProjectFilter(project);
+    setShowLanding(false);
+    setActiveNav('history');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleRunProjectAudit = (projectUrl) => {
     try {
       sessionStorage.setItem('cr_input_mode', 'url');
       sessionStorage.setItem('cr_github_url', projectUrl);
@@ -305,6 +323,7 @@ export default function App() {
               {activeNav === 'workbench' && currentView === 'form' && (
                 <div className="max-w-7xl mx-auto">
                   <ReviewForm 
+                    key={reviewFormKey}
                     onReviewComplete={handleReviewComplete} 
                     user={user}
                     onOpenAuth={(mode) => { setAuthMode(mode); setIsAuthOpen(true); }}
@@ -326,6 +345,9 @@ export default function App() {
               {activeNav === 'history' && (
                 <HistoryView 
                   user={user}
+                  selectedProject={selectedProjectFilter}
+                  onClearProjectFilter={() => setSelectedProjectFilter(null)}
+                  onRunAudit={handleRunProjectAudit}
                   onSelectReview={handleSelectFromHistory} 
                   onOpenAuth={(mode) => { setAuthMode(mode); setIsAuthOpen(true); }}
                 />
